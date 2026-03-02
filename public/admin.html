@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Leaderboard Admin</title>
+  <style>
+    :root {
+      --bg: #f4efe7;
+      --panel: rgba(255, 252, 247, 0.92);
+      --line: #d7c6b0;
+      --text: #1f1a17;
+      --muted: #6b6158;
+      --accent: #aa5c2d;
+      --accent-2: #23413c;
+      --danger: #9d2b2b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(170, 92, 45, 0.24), transparent 28%),
+        radial-gradient(circle at bottom right, rgba(35, 65, 60, 0.2), transparent 30%),
+        linear-gradient(160deg, #efe6da 0%, #f6f1e9 55%, #e8dfd2 100%);
+    }
+    .shell {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+    .hero, .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      box-shadow: 0 20px 40px rgba(54, 35, 18, 0.08);
+      backdrop-filter: blur(8px);
+    }
+    .hero {
+      padding: 24px;
+      margin-bottom: 20px;
+    }
+    .hero h1 {
+      margin: 0 0 8px;
+      font-size: clamp(2rem, 5vw, 3.6rem);
+      line-height: 0.95;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+    }
+    .hero p {
+      margin: 0;
+      color: var(--muted);
+      max-width: 720px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 340px 1fr;
+      gap: 20px;
+    }
+    .panel {
+      padding: 18px;
+    }
+    label {
+      display: block;
+      margin: 0 0 6px;
+      font-size: 0.92rem;
+      color: var(--muted);
+    }
+    input, textarea, select, button {
+      width: 100%;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      padding: 11px 12px;
+      font: inherit;
+      color: var(--text);
+      background: #fffdfa;
+    }
+    textarea {
+      min-height: 90px;
+      resize: vertical;
+    }
+    button {
+      cursor: pointer;
+      background: var(--accent);
+      color: #fff8f0;
+      border: 0;
+      font-weight: 700;
+    }
+    button.secondary {
+      background: var(--accent-2);
+    }
+    button.danger {
+      background: var(--danger);
+    }
+    .stack {
+      display: grid;
+      gap: 12px;
+    }
+    .toolbar {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+    .toolbar > * {
+      flex: 1 1 180px;
+    }
+    .status {
+      margin-top: 10px;
+      min-height: 20px;
+      color: var(--muted);
+    }
+    .table-wrap {
+      overflow: auto;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 760px;
+      background: #fffdfa;
+    }
+    th, td {
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      font-size: 0.84rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    tr:hover td {
+      background: rgba(170, 92, 45, 0.05);
+    }
+    .small {
+      color: var(--muted);
+      font-size: 0.86rem;
+    }
+    .actions {
+      display: flex;
+      gap: 8px;
+    }
+    .actions button {
+      width: auto;
+      min-width: 90px;
+    }
+    @media (max-width: 900px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <section class="hero">
+      <h1>Leaderboard Control</h1>
+      <p>Use your admin token to inspect, edit, create, and delete leaderboard entries on your self-hosted backend.</p>
+    </section>
+
+    <div class="grid">
+      <section class="panel stack">
+        <div>
+          <label for="token">Admin Token</label>
+          <input id="token" type="password" placeholder="Bearer token">
+        </div>
+        <div>
+          <label for="publicKey">Leaderboard Public Key</label>
+          <input id="publicKey" type="text" placeholder="ff61800f61ee...">
+        </div>
+        <div class="toolbar">
+          <button id="loadEntries" class="secondary" type="button">Load Entries</button>
+          <button id="loadKeys" type="button">Load Keys</button>
+        </div>
+        <div>
+          <label for="knownKeys">Known Public Keys</label>
+          <select id="knownKeys">
+            <option value="">Select a key</option>
+          </select>
+        </div>
+        <hr style="width: 100%; border: 0; border-top: 1px solid var(--line);">
+        <div>
+          <label for="userGuid">User GUID</label>
+          <input id="userGuid" type="text" placeholder="player GUID">
+        </div>
+        <div>
+          <label for="username">Username</label>
+          <input id="username" type="text" placeholder="Alice-USA-12.34">
+        </div>
+        <div>
+          <label for="score">Score</label>
+          <input id="score" type="number" step="1" placeholder="1234">
+        </div>
+        <div>
+          <label for="extra">Extra</label>
+          <textarea id="extra" placeholder="yes"></textarea>
+        </div>
+        <div class="toolbar">
+          <button id="saveEntry" type="button">Save Entry</button>
+          <button id="newEntry" class="secondary" type="button">New Form</button>
+          <button id="deleteEntry" class="danger" type="button">Delete Entry</button>
+        </div>
+        <div id="status" class="status"></div>
+      </section>
+
+      <section class="panel">
+        <div class="toolbar">
+          <div class="small">Entries for the selected public key. Click a row to edit it.</div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Rank</th>
+                <th>Username</th>
+                <th>Score</th>
+                <th>Extra</th>
+                <th>User GUID</th>
+                <th>Updated</th>
+              </tr>
+            </thead>
+            <tbody id="entriesBody">
+              <tr><td colspan="6" class="small">No entries loaded yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    const tokenInput = document.getElementById("token");
+    const publicKeyInput = document.getElementById("publicKey");
+    const knownKeysSelect = document.getElementById("knownKeys");
+    const userGuidInput = document.getElementById("userGuid");
+    const usernameInput = document.getElementById("username");
+    const scoreInput = document.getElementById("score");
+    const extraInput = document.getElementById("extra");
+    const statusNode = document.getElementById("status");
+    const entriesBody = document.getElementById("entriesBody");
+
+    tokenInput.value = localStorage.getItem("lbAdminToken") || "";
+    publicKeyInput.value = localStorage.getItem("lbAdminPublicKey") || "";
+
+    tokenInput.addEventListener("change", () => localStorage.setItem("lbAdminToken", tokenInput.value.trim()));
+    publicKeyInput.addEventListener("change", () => localStorage.setItem("lbAdminPublicKey", publicKeyInput.value.trim()));
+
+    document.getElementById("loadKeys").addEventListener("click", loadPublicKeys);
+    document.getElementById("loadEntries").addEventListener("click", loadEntries);
+    document.getElementById("saveEntry").addEventListener("click", saveEntry);
+    document.getElementById("deleteEntry").addEventListener("click", deleteEntry);
+    document.getElementById("newEntry").addEventListener("click", clearForm);
+    knownKeysSelect.addEventListener("change", () => {
+      if (knownKeysSelect.value) {
+        publicKeyInput.value = knownKeysSelect.value;
+        localStorage.setItem("lbAdminPublicKey", publicKeyInput.value.trim());
+      }
+    });
+
+    async function api(path, options = {}) {
+      const token = tokenInput.value.trim();
+      if (!token) {
+        throw new Error("Enter the admin token first.");
+      }
+
+      const response = await fetch(path, {
+        ...options,
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json",
+          ...(options.headers || {})
+        }
+      });
+
+      const text = await response.text();
+      if (!response.ok) {
+        throw new Error(text || `Request failed with ${response.status}`);
+      }
+
+      return text ? JSON.parse(text) : null;
+    }
+
+    async function loadPublicKeys() {
+      setStatus("Loading public keys...");
+      try {
+        const keys = await api("/admin/api/public-keys");
+        knownKeysSelect.innerHTML = '<option value="">Select a key</option>';
+        for (const key of keys) {
+          const option = document.createElement("option");
+          option.value = key;
+          option.textContent = key;
+          knownKeysSelect.appendChild(option);
+        }
+        setStatus(`Loaded ${keys.length} public key(s).`);
+      } catch (error) {
+        setStatus(error.message, true);
+      }
+    }
+
+    async function loadEntries() {
+      const publicKey = publicKeyInput.value.trim();
+      if (!publicKey) {
+        setStatus("Enter a public key first.", true);
+        return;
+      }
+
+      localStorage.setItem("lbAdminPublicKey", publicKey);
+      setStatus("Loading entries...");
+
+      try {
+        const entries = await api(`/admin/api/entries?publicKey=${encodeURIComponent(publicKey)}`);
+        renderEntries(entries);
+        setStatus(`Loaded ${entries.length} entr${entries.length === 1 ? "y" : "ies"}.`);
+      } catch (error) {
+        setStatus(error.message, true);
+      }
+    }
+
+    async function saveEntry() {
+      const payload = collectForm();
+      if (!payload) {
+        return;
+      }
+
+      setStatus("Saving entry...");
+      try {
+        await api("/admin/api/entries", {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
+        await loadEntries();
+        setStatus("Entry saved.");
+      } catch (error) {
+        setStatus(error.message, true);
+      }
+    }
+
+    async function deleteEntry() {
+      const publicKey = publicKeyInput.value.trim();
+      const userGuid = userGuidInput.value.trim();
+
+      if (!publicKey || !userGuid) {
+        setStatus("Public key and user GUID are required to delete.", true);
+        return;
+      }
+
+      if (!confirm(`Delete entry for ${userGuid}?`)) {
+        return;
+      }
+
+      setStatus("Deleting entry...");
+      try {
+        await api(`/admin/api/entries/${encodeURIComponent(publicKey)}/${encodeURIComponent(userGuid)}`, {
+          method: "DELETE",
+          headers: {}
+        });
+        clearForm();
+        await loadEntries();
+        setStatus("Entry deleted.");
+      } catch (error) {
+        setStatus(error.message, true);
+      }
+    }
+
+    function renderEntries(entries) {
+      if (!entries.length) {
+        entriesBody.innerHTML = '<tr><td colspan="6" class="small">No entries found for this public key.</td></tr>';
+        return;
+      }
+
+      entriesBody.innerHTML = "";
+      for (const entry of entries) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${entry.rank}</td>
+          <td>${escapeHtml(entry.username)}</td>
+          <td>${entry.score}</td>
+          <td>${escapeHtml(entry.extra || "")}</td>
+          <td>${escapeHtml(entry.userGuid)}</td>
+          <td>${new Date(entry.updatedAt * 1000).toLocaleString()}</td>
+        `;
+        tr.addEventListener("click", () => fillForm(entry));
+        entriesBody.appendChild(tr);
+      }
+    }
+
+    function collectForm() {
+      const publicKey = publicKeyInput.value.trim();
+      const userGuid = userGuidInput.value.trim();
+      const username = usernameInput.value.trim();
+      const score = scoreInput.value.trim();
+      const extra = extraInput.value;
+
+      if (!publicKey || !userGuid || !username || !score) {
+        setStatus("Public key, user GUID, username, and score are required.", true);
+        return null;
+      }
+
+      return {
+        publicKey,
+        userGuid,
+        username,
+        score: Number(score),
+        extra
+      };
+    }
+
+    function fillForm(entry) {
+      publicKeyInput.value = entry.publicKey;
+      userGuidInput.value = entry.userGuid;
+      usernameInput.value = entry.username;
+      scoreInput.value = entry.score;
+      extraInput.value = entry.extra || "";
+      localStorage.setItem("lbAdminPublicKey", publicKeyInput.value.trim());
+      setStatus(`Loaded ${entry.userGuid} into the form.`);
+    }
+
+    function clearForm() {
+      userGuidInput.value = "";
+      usernameInput.value = "";
+      scoreInput.value = "";
+      extraInput.value = "";
+      setStatus("Form cleared.");
+    }
+
+    function setStatus(message, isError = false) {
+      statusNode.textContent = message;
+      statusNode.style.color = isError ? "#9d2b2b" : "#6b6158";
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll("\"", "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+  </script>
+</body>
+</html>
