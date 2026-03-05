@@ -210,6 +210,21 @@
 
       <section class="panel">
         <div class="toolbar">
+          <div>
+            <label for="sortBy">Sort By</label>
+            <select id="sortBy">
+              <option value="rank">Rank</option>
+              <option value="score">Score</option>
+              <option value="time">Time</option>
+            </select>
+          </div>
+          <div>
+            <label for="sortDirection">Direction</label>
+            <select id="sortDirection">
+              <option value="asc">Ascending</option>
+              <option value="desc">Descending</option>
+            </select>
+          </div>
           <div class="small">Entries for the selected public key. Click a row to edit it.</div>
         </div>
         <div class="table-wrap">
@@ -243,12 +258,28 @@
     const extraInput = document.getElementById("extra");
     const statusNode = document.getElementById("status");
     const entriesBody = document.getElementById("entriesBody");
+    const sortBySelect = document.getElementById("sortBy");
+    const sortDirectionSelect = document.getElementById("sortDirection");
 
     tokenInput.value = localStorage.getItem("lbAdminToken") || "";
     publicKeyInput.value = localStorage.getItem("lbAdminPublicKey") || "";
+    sortBySelect.value = localStorage.getItem("lbAdminSortBy") || "rank";
+    sortDirectionSelect.value = localStorage.getItem("lbAdminSortDirection") || "asc";
 
     tokenInput.addEventListener("change", () => localStorage.setItem("lbAdminToken", tokenInput.value.trim()));
     publicKeyInput.addEventListener("change", () => localStorage.setItem("lbAdminPublicKey", publicKeyInput.value.trim()));
+    sortBySelect.addEventListener("change", () => {
+      localStorage.setItem("lbAdminSortBy", sortBySelect.value);
+      if (publicKeyInput.value.trim()) {
+        loadEntries();
+      }
+    });
+    sortDirectionSelect.addEventListener("change", () => {
+      localStorage.setItem("lbAdminSortDirection", sortDirectionSelect.value);
+      if (publicKeyInput.value.trim()) {
+        loadEntries();
+      }
+    });
 
     document.getElementById("loadKeys").addEventListener("click", loadPublicKeys);
     document.getElementById("loadEntries").addEventListener("click", loadEntries);
@@ -313,7 +344,17 @@
       setStatus("Loading entries...");
 
       try {
-        const entries = await api(`/admin/api/entries?publicKey=${encodeURIComponent(publicKey)}`);
+        const sortBy = sortBySelect.value;
+        const sortDirection = sortDirectionSelect.value;
+        localStorage.setItem("lbAdminSortBy", sortBy);
+        localStorage.setItem("lbAdminSortDirection", sortDirection);
+
+        const query = new URLSearchParams({
+          publicKey,
+          sortBy,
+          sortDirection
+        });
+        const entries = await api(`/admin/api/entries?${query.toString()}`);
         renderEntries(entries);
         setStatus(`Loaded ${entries.length} entr${entries.length === 1 ? "y" : "ies"}.`);
       } catch (error) {

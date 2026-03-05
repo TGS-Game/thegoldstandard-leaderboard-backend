@@ -118,8 +118,7 @@ class LeaderboardService {
       isInAscendingOrder: query.isInAscendingOrder,
       timePeriod: query.timePeriod
     });
-
-    return ranked.map((entry) => ({
+    const mapped = ranked.map((entry) => ({
       id: entry.id,
       publicKey: entry.publicKey,
       userGuid: entry.userGuid,
@@ -130,6 +129,11 @@ class LeaderboardService {
       updatedAt: entry.updatedAt,
       rank: entry.rank
     }));
+
+    return sortAdminEntries(mapped, {
+      sortBy: query.sortBy,
+      sortDirection: query.sortDirection
+    });
   }
 
   async adminUpsertEntry(body) {
@@ -287,6 +291,51 @@ function clampToZero(value) {
 
 function toBool(value) {
   return value === true || value === 1 || value === "1" || value === "true";
+}
+
+function sortAdminEntries(entries, options) {
+  const sortBy = normalizeSortBy(options.sortBy);
+  const sortDirection = normalizeSortDirection(options.sortDirection);
+  const directionMultiplier = sortDirection === "asc" ? 1 : -1;
+
+  return [...entries].sort((left, right) => {
+    let valueDelta = 0;
+
+    if (sortBy === "rank") {
+      valueDelta = left.rank - right.rank;
+    } else if (sortBy === "time") {
+      valueDelta = left.updatedAt - right.updatedAt;
+    } else {
+      valueDelta = left.score - right.score;
+    }
+
+    if (valueDelta !== 0) {
+      return valueDelta * directionMultiplier;
+    }
+
+    const rankDelta = left.rank - right.rank;
+    if (rankDelta !== 0) {
+      return rankDelta;
+    }
+
+    return left.id.localeCompare(right.id);
+  });
+}
+
+function normalizeSortBy(value) {
+  const normalized = normalizeOptionalString(value).toLowerCase();
+  if (normalized === "rank" || normalized === "score" || normalized === "time") {
+    return normalized;
+  }
+  return "rank";
+}
+
+function normalizeSortDirection(value) {
+  const normalized = normalizeOptionalString(value).toLowerCase();
+  if (normalized === "asc" || normalized === "desc") {
+    return normalized;
+  }
+  return "asc";
 }
 
 function createHttpError(status, message) {

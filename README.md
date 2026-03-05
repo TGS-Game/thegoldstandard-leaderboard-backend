@@ -88,7 +88,7 @@ If `ADMIN_TOKEN` is set, the backend exposes:
 
 - `GET /admin` for the built-in management page
 - `GET /admin/api/public-keys`
-- `GET /admin/api/entries?publicKey=...`
+- `GET /admin/api/entries?publicKey=...&sortBy=rank|score|time&sortDirection=asc|desc`
 - `POST /admin/api/entries`
 - `PUT /admin/api/entries/:publicKey/:userGuid`
 - `DELETE /admin/api/entries/:publicKey/:userGuid`
@@ -99,6 +99,7 @@ Authenticate with either:
 - `X-Admin-Token: <ADMIN_TOKEN>`
 
 The built-in admin page prompts for the token and lets you load public keys, inspect entries, edit rows, create rows, and delete rows.
+It also lets you sort the shown entries by rank, score, or updated time in ascending or descending order.
 
 ## Step-By-Step Railway Deployment
 
