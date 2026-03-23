@@ -13,6 +13,10 @@ It exposes the routes your current Unity code expects:
 - `GET /entry/get`
 - `GET /entry/count`
 
+It now also supports first-launch player profile capture:
+
+- `POST /player-profile`
+
 It also exposes an admin panel and admin API for managing entries yourself.
 
 ## Why this works
@@ -23,6 +27,7 @@ Your Unity gameplay/UI scripts do not need leaderboard logic changes. The only U
 
 - Default local storage: SQLite file
 - Production-ready option: Postgres via `DATABASE_URL`
+- Additional player onboarding storage: `player_profiles` table in the same database
 
 If `DATABASE_URL` is set, the service uses Postgres. Otherwise it uses SQLite.
 
@@ -88,7 +93,8 @@ If `ADMIN_TOKEN` is set, the backend exposes:
 
 - `GET /admin` for the built-in management page
 - `GET /admin/api/public-keys`
-- `GET /admin/api/entries?publicKey=...&sortBy=rank|score|time&sortDirection=asc|desc`
+- `GET /admin/api/entries?publicKey=...`
+- `GET /admin/api/player-profiles`
 - `POST /admin/api/entries`
 - `PUT /admin/api/entries/:publicKey/:userGuid`
 - `DELETE /admin/api/entries/:publicKey/:userGuid`
@@ -99,7 +105,6 @@ Authenticate with either:
 - `X-Admin-Token: <ADMIN_TOKEN>`
 
 The built-in admin page prompts for the token and lets you load public keys, inspect entries, edit rows, create rows, and delete rows.
-It also lets you sort the shown entries by rank, score, or updated time in ascending or descending order.
 
 ## Step-By-Step Railway Deployment
 
@@ -128,6 +133,7 @@ It also lets you sort the shown entries by rank, score, or updated time in ascen
 - `GET /entry/get` returns a JSON object for one entry.
 - `GET /entry/count` returns a plain text integer.
 - Write routes return HTTP `200` on success. The body is not significant to the Unity package.
+- `POST /player-profile` accepts `name`, `email`, `country`, `consentAccepted`, and optional `userGuid`.
 
 ## Public Key Behavior
 

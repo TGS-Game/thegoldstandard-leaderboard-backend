@@ -107,8 +107,33 @@ class LeaderboardService {
     return entries.length;
   }
 
+  async uploadPlayerProfile(body) {
+    const name = this.normalizePlayerName(body.name);
+    const email = this.normalizePlayerEmail(body.email);
+    const country = this.normalizeCountry(body.country);
+    const consentAccepted = this.normalizeConsent(body.consentAccepted);
+    const userGuid = this.normalizeOptionalUserGuid(body.userGuid);
+    const timestamp = nowUnixSeconds();
+    const existing = await this.storage.getPlayerProfileByEmail(email);
+
+    await this.storage.upsertPlayerProfile({
+      id: existing ? existing.id : crypto.randomUUID(),
+      name,
+      email,
+      country,
+      consentAccepted,
+      userGuid: userGuid || (existing ? existing.userGuid : ""),
+      createdAt: existing ? existing.createdAt : timestamp,
+      updatedAt: timestamp
+    });
+  }
+
   async getAdminPublicKeys() {
     return this.storage.listPublicKeys();
+  }
+
+  async getAdminPlayerProfiles() {
+    return this.storage.listPlayerProfiles();
   }
 
   async getAdminEntries(query) {
@@ -118,7 +143,8 @@ class LeaderboardService {
       isInAscendingOrder: query.isInAscendingOrder,
       timePeriod: query.timePeriod
     });
-    const mapped = ranked.map((entry) => ({
+
+    return ranked.map((entry) => ({
       id: entry.id,
       publicKey: entry.publicKey,
       userGuid: entry.userGuid,
@@ -129,11 +155,6 @@ class LeaderboardService {
       updatedAt: entry.updatedAt,
       rank: entry.rank
     }));
-
-    return sortAdminEntries(mapped, {
-      sortBy: query.sortBy,
-      sortDirection: query.sortDirection
-    });
   }
 
   async adminUpsertEntry(body) {
@@ -211,6 +232,71 @@ class LeaderboardService {
     }
 
     return parsed;
+  }
+
+  normalizePlayerName(name) {
+    const value = typeof name === "string" ? name.trim() : "";
+    if (!value) {
+      throw createHttpError(400, "name is required.");
+    }
+
+    if (value.length > 100) {
+      throw createHttpError(400, "name is too long.");
+    }
+
+    return value;
+  }
+
+  normalizePlayerEmail(email) {
+    const value = typeof email === "string" ? email.trim().toLowerCase() : "";
+    if (!value) {
+      throw createHttpError(400, "email is required.");
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+      throw createHttpError(400, "email is invalid.");
+    }
+
+    if (value.length > 255) {
+      throw createHttpError(400, "email is too long.");
+    }
+
+    return value;
+  }
+
+  normalizeCountry(country) {
+    const value = typeof country === "string" ? country.trim() : "";
+    if (!value) {
+      throw createHttpError(400, "country is required.");
+    }
+
+    if (value.length > 100) {
+      throw createHttpError(400, "country is too long.");
+    }
+
+    return value;
+  }
+
+  normalizeConsent(consentAccepted) {
+    if (
+      consentAccepted === true ||
+      consentAccepted === 1 ||
+      consentAccepted === "1" ||
+      consentAccepted === "true"
+    ) {
+      return true;
+    }
+
+    throw createHttpError(400, "consentAccepted must be true.");
+  }
+
+  normalizeOptionalUserGuid(userGuid) {
+    const value = typeof userGuid === "string" ? userGuid.trim() : "";
+    if (!value) {
+      return "";
+    }
+
+    return value.slice(0, 100);
   }
 }
 
@@ -291,51 +377,6 @@ function clampToZero(value) {
 
 function toBool(value) {
   return value === true || value === 1 || value === "1" || value === "true";
-}
-
-function sortAdminEntries(entries, options) {
-  const sortBy = normalizeSortBy(options.sortBy);
-  const sortDirection = normalizeSortDirection(options.sortDirection);
-  const directionMultiplier = sortDirection === "asc" ? 1 : -1;
-
-  return [...entries].sort((left, right) => {
-    let valueDelta = 0;
-
-    if (sortBy === "rank") {
-      valueDelta = left.rank - right.rank;
-    } else if (sortBy === "time") {
-      valueDelta = left.updatedAt - right.updatedAt;
-    } else {
-      valueDelta = left.score - right.score;
-    }
-
-    if (valueDelta !== 0) {
-      return valueDelta * directionMultiplier;
-    }
-
-    const rankDelta = left.rank - right.rank;
-    if (rankDelta !== 0) {
-      return rankDelta;
-    }
-
-    return left.id.localeCompare(right.id);
-  });
-}
-
-function normalizeSortBy(value) {
-  const normalized = normalizeOptionalString(value).toLowerCase();
-  if (normalized === "rank" || normalized === "score" || normalized === "time") {
-    return normalized;
-  }
-  return "rank";
-}
-
-function normalizeSortDirection(value) {
-  const normalized = normalizeOptionalString(value).toLowerCase();
-  if (normalized === "asc" || normalized === "desc") {
-    return normalized;
-  }
-  return "asc";
 }
 
 function createHttpError(status, message) {

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>TGS Leaderboard Admin</title>
+  <title>Leaderboard Admin</title>
   <style>
     :root {
       --bg: #f4efe7;
@@ -159,8 +159,8 @@
 <body>
   <div class="shell">
     <section class="hero">
-      <h1>TGS Leaderboard Control</h1>
-      <p>Use your admin token to inspect, edit, create, and delete TGS leaderboard entries.</p>
+      <h1>Leaderboard Control</h1>
+      <p>Use your admin token to inspect, edit, create, and delete leaderboard entries on your self-hosted backend.</p>
     </section>
 
     <div class="grid">
@@ -197,7 +197,7 @@
           <input id="score" type="number" step="1" placeholder="1234">
         </div>
         <div>
-          <label for="extra">Is Allowed?</label>
+          <label for="extra">Extra</label>
           <textarea id="extra" placeholder="yes"></textarea>
         </div>
         <div class="toolbar">
@@ -210,21 +210,6 @@
 
       <section class="panel">
         <div class="toolbar">
-          <div>
-            <label for="sortBy">Sort By</label>
-            <select id="sortBy">
-              <option value="rank">Rank</option>
-              <option value="score">Score</option>
-              <option value="time">Time</option>
-            </select>
-          </div>
-          <div>
-            <label for="sortDirection">Direction</label>
-            <select id="sortDirection">
-              <option value="asc">Ascending</option>
-              <option value="desc">Descending</option>
-            </select>
-          </div>
           <div class="small">Entries for the selected public key. Click a row to edit it.</div>
         </div>
         <div class="table-wrap">
@@ -234,7 +219,7 @@
                 <th>Rank</th>
                 <th>Username</th>
                 <th>Score</th>
-                <th>Is Allowed?</th>
+                <th>Extra</th>
                 <th>User GUID</th>
                 <th>Updated</th>
               </tr>
@@ -258,28 +243,12 @@
     const extraInput = document.getElementById("extra");
     const statusNode = document.getElementById("status");
     const entriesBody = document.getElementById("entriesBody");
-    const sortBySelect = document.getElementById("sortBy");
-    const sortDirectionSelect = document.getElementById("sortDirection");
 
     tokenInput.value = localStorage.getItem("lbAdminToken") || "";
     publicKeyInput.value = localStorage.getItem("lbAdminPublicKey") || "";
-    sortBySelect.value = localStorage.getItem("lbAdminSortBy") || "rank";
-    sortDirectionSelect.value = localStorage.getItem("lbAdminSortDirection") || "asc";
 
     tokenInput.addEventListener("change", () => localStorage.setItem("lbAdminToken", tokenInput.value.trim()));
     publicKeyInput.addEventListener("change", () => localStorage.setItem("lbAdminPublicKey", publicKeyInput.value.trim()));
-    sortBySelect.addEventListener("change", () => {
-      localStorage.setItem("lbAdminSortBy", sortBySelect.value);
-      if (publicKeyInput.value.trim()) {
-        loadEntries();
-      }
-    });
-    sortDirectionSelect.addEventListener("change", () => {
-      localStorage.setItem("lbAdminSortDirection", sortDirectionSelect.value);
-      if (publicKeyInput.value.trim()) {
-        loadEntries();
-      }
-    });
 
     document.getElementById("loadKeys").addEventListener("click", loadPublicKeys);
     document.getElementById("loadEntries").addEventListener("click", loadEntries);
@@ -344,17 +313,7 @@
       setStatus("Loading entries...");
 
       try {
-        const sortBy = sortBySelect.value;
-        const sortDirection = sortDirectionSelect.value;
-        localStorage.setItem("lbAdminSortBy", sortBy);
-        localStorage.setItem("lbAdminSortDirection", sortDirection);
-
-        const query = new URLSearchParams({
-          publicKey,
-          sortBy,
-          sortDirection
-        });
-        const entries = await api(`/admin/api/entries?${query.toString()}`);
+        const entries = await api(`/admin/api/entries?publicKey=${encodeURIComponent(publicKey)}`);
         renderEntries(entries);
         setStatus(`Loaded ${entries.length} entr${entries.length === 1 ? "y" : "ies"}.`);
       } catch (error) {
