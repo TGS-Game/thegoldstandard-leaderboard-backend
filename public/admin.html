@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Leaderboard Admin</title>
+  <title>TGS Control Panel</title>
   <style>
     :root {
       --bg: #f4efe7;
@@ -56,6 +56,10 @@
     .grid {
       display: grid;
       grid-template-columns: 340px 1fr;
+      gap: 20px;
+    }
+    .main-stack {
+      display: grid;
       gap: 20px;
     }
     .panel {
@@ -149,6 +153,34 @@
       width: auto;
       min-width: 90px;
     }
+    .section-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+    }
+    .section-head h2 {
+      margin: 0;
+      font-size: 1.1rem;
+    }
+    .section-head p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+    .inline-controls {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .inline-controls select,
+    .inline-controls button {
+      width: auto;
+      min-width: 160px;
+    }
     @media (max-width: 900px) {
       .grid {
         grid-template-columns: 1fr;
@@ -159,8 +191,8 @@
 <body>
   <div class="shell">
     <section class="hero">
-      <h1>Leaderboard Control</h1>
-      <p>Use your admin token to inspect, edit, create, and delete leaderboard entries on your self-hosted backend.</p>
+      <h1>TGS Control Panel</h1>
+      <p>Use your admin token to manage leaderboard entries and review first-launch player profiles from the same backend.</p>
     </section>
 
     <div class="grid">
@@ -208,28 +240,74 @@
         <div id="status" class="status"></div>
       </section>
 
-      <section class="panel">
-        <div class="toolbar">
-          <div class="small">Entries for the selected public key. Click a row to edit it.</div>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Rank</th>
-                <th>Username</th>
-                <th>Score</th>
-                <th>Extra</th>
-                <th>User GUID</th>
-                <th>Updated</th>
-              </tr>
-            </thead>
-            <tbody id="entriesBody">
-              <tr><td colspan="6" class="small">No entries loaded yet.</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <div class="main-stack">
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <h2>Leaderboard Entries</h2>
+              <p>Entries for the selected public key. Click a row to edit it.</p>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Rank</th>
+                  <th>Username</th>
+                  <th>Score</th>
+                  <th>Extra</th>
+                  <th>User GUID</th>
+                  <th>Updated</th>
+                </tr>
+              </thead>
+              <tbody id="entriesBody">
+                <tr><td colspan="6" class="small">No entries loaded yet.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <h2>Player Profiles</h2>
+              <p>Review Get Started submissions and sort them by date, name, email, or country.</p>
+            </div>
+            <div class="inline-controls">
+              <select id="profileSort">
+                <option value="createdAt-desc">Newest First</option>
+                <option value="createdAt-asc">Oldest First</option>
+                <option value="name-asc">Name A-Z</option>
+                <option value="name-desc">Name Z-A</option>
+                <option value="email-asc">Email A-Z</option>
+                <option value="email-desc">Email Z-A</option>
+                <option value="country-asc">Country A-Z</option>
+                <option value="country-desc">Country Z-A</option>
+              </select>
+              <button id="loadProfiles" class="secondary" type="button">Load Profiles</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Email</th>
+                  <th>Country</th>
+                  <th>Consent</th>
+                  <th>User GUID</th>
+                  <th>Created</th>
+                  <th>Updated</th>
+                </tr>
+              </thead>
+              <tbody id="profilesBody">
+                <tr><td colspan="7" class="small">No profiles loaded yet.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div id="profilesStatus" class="status"></div>
+        </section>
+      </div>
     </div>
   </div>
 
@@ -243,6 +321,10 @@
     const extraInput = document.getElementById("extra");
     const statusNode = document.getElementById("status");
     const entriesBody = document.getElementById("entriesBody");
+    const profileSortSelect = document.getElementById("profileSort");
+    const profilesBody = document.getElementById("profilesBody");
+    const profilesStatusNode = document.getElementById("profilesStatus");
+    let loadedProfiles = [];
 
     tokenInput.value = localStorage.getItem("lbAdminToken") || "";
     publicKeyInput.value = localStorage.getItem("lbAdminPublicKey") || "";
@@ -252,9 +334,11 @@
 
     document.getElementById("loadKeys").addEventListener("click", loadPublicKeys);
     document.getElementById("loadEntries").addEventListener("click", loadEntries);
+    document.getElementById("loadProfiles").addEventListener("click", loadProfiles);
     document.getElementById("saveEntry").addEventListener("click", saveEntry);
     document.getElementById("deleteEntry").addEventListener("click", deleteEntry);
     document.getElementById("newEntry").addEventListener("click", clearForm);
+    profileSortSelect.addEventListener("change", () => renderProfiles(sortProfiles(loadedProfiles)));
     knownKeysSelect.addEventListener("change", () => {
       if (knownKeysSelect.value) {
         publicKeyInput.value = knownKeysSelect.value;
@@ -318,6 +402,17 @@
         setStatus(`Loaded ${entries.length} entr${entries.length === 1 ? "y" : "ies"}.`);
       } catch (error) {
         setStatus(error.message, true);
+      }
+    }
+
+    async function loadProfiles() {
+      setProfilesStatus("Loading player profiles...");
+      try {
+        loadedProfiles = await api("/admin/api/player-profiles");
+        renderProfiles(sortProfiles(loadedProfiles));
+        setProfilesStatus(`Loaded ${loadedProfiles.length} profile${loadedProfiles.length === 1 ? "" : "s"}.`);
+      } catch (error) {
+        setProfilesStatus(error.message, true);
       }
     }
 
@@ -389,6 +484,56 @@
       }
     }
 
+    function renderProfiles(profiles) {
+      if (!profiles.length) {
+        profilesBody.innerHTML = '<tr><td colspan="7" class="small">No profiles found yet.</td></tr>';
+        return;
+      }
+
+      profilesBody.innerHTML = "";
+      for (const profile of profiles) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${escapeHtml(profile.name || "")}</td>
+          <td>${escapeHtml(profile.email || "")}</td>
+          <td>${escapeHtml(profile.country || "")}</td>
+          <td>${profile.consentAccepted ? "Yes" : "No"}</td>
+          <td>${escapeHtml(profile.userGuid || "")}</td>
+          <td>${formatTimestamp(profile.createdAt)}</td>
+          <td>${formatTimestamp(profile.updatedAt)}</td>
+        `;
+        profilesBody.appendChild(tr);
+      }
+    }
+
+    function sortProfiles(profiles) {
+      const [field, direction] = profileSortSelect.value.split("-");
+      const factor = direction === "desc" ? -1 : 1;
+
+      return [...profiles].sort((left, right) => {
+        const leftValue = normalizeProfileSortValue(left, field);
+        const rightValue = normalizeProfileSortValue(right, field);
+
+        if (leftValue < rightValue) {
+          return -1 * factor;
+        }
+
+        if (leftValue > rightValue) {
+          return 1 * factor;
+        }
+
+        return 0;
+      });
+    }
+
+    function normalizeProfileSortValue(profile, field) {
+      if (field === "createdAt") {
+        return Number(profile.createdAt || 0);
+      }
+
+      return String(profile[field] || "").toLowerCase();
+    }
+
     function collectForm() {
       const publicKey = publicKeyInput.value.trim();
       const userGuid = userGuidInput.value.trim();
@@ -431,6 +576,20 @@
     function setStatus(message, isError = false) {
       statusNode.textContent = message;
       statusNode.style.color = isError ? "#9d2b2b" : "#6b6158";
+    }
+
+    function setProfilesStatus(message, isError = false) {
+      profilesStatusNode.textContent = message;
+      profilesStatusNode.style.color = isError ? "#9d2b2b" : "#6b6158";
+    }
+
+    function formatTimestamp(value) {
+      const numeric = Number(value || 0);
+      if (!numeric) {
+        return "";
+      }
+
+      return new Date(numeric * 1000).toLocaleString();
     }
 
     function escapeHtml(value) {
