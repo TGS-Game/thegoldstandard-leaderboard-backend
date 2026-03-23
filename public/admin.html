@@ -6,64 +6,83 @@
   <title>TGS Control Panel</title>
   <style>
     :root {
-      --bg: #f4efe7;
-      --panel: rgba(255, 252, 247, 0.92);
-      --line: #d7c6b0;
-      --text: #1f1a17;
-      --muted: #6b6158;
-      --accent: #aa5c2d;
-      --accent-2: #23413c;
-      --danger: #9d2b2b;
+      --bg: #efe4d1;
+      --panel: rgba(255, 250, 242, 0.94);
+      --panel-strong: rgba(248, 239, 226, 0.96);
+      --line: #d1b999;
+      --text: #201814;
+      --muted: #6c5f54;
+      --accent: #b5642f;
+      --accent-2: #1c4d46;
+      --accent-3: #d8a15f;
+      --danger: #a53030;
+      --shadow: 0 24px 50px rgba(60, 34, 12, 0.12);
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      font-family: Georgia, "Times New Roman", serif;
+      font-family: "Trebuchet MS", "Avenir Next", sans-serif;
       color: var(--text);
       background:
-        radial-gradient(circle at top left, rgba(170, 92, 45, 0.24), transparent 28%),
-        radial-gradient(circle at bottom right, rgba(35, 65, 60, 0.2), transparent 30%),
-        linear-gradient(160deg, #efe6da 0%, #f6f1e9 55%, #e8dfd2 100%);
+        radial-gradient(circle at top left, rgba(181, 100, 47, 0.28), transparent 24%),
+        radial-gradient(circle at top right, rgba(28, 77, 70, 0.15), transparent 28%),
+        linear-gradient(160deg, #f5ebdd 0%, #efe0c7 52%, #e4d2bb 100%);
+      min-height: 100vh;
     }
     .shell {
-      max-width: 1200px;
+      max-width: 1380px;
       margin: 0 auto;
-      padding: 24px;
+      padding: 28px;
     }
     .hero, .panel {
       background: var(--panel);
       border: 1px solid var(--line);
-      border-radius: 18px;
-      box-shadow: 0 20px 40px rgba(54, 35, 18, 0.08);
+      border-radius: 24px;
+      box-shadow: var(--shadow);
       backdrop-filter: blur(8px);
     }
     .hero {
-      padding: 24px;
-      margin-bottom: 20px;
+      padding: 28px;
+      margin-bottom: 24px;
+      position: relative;
+      overflow: hidden;
+    }
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -60px;
+      top: -70px;
+      width: 240px;
+      height: 240px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(216, 161, 95, 0.35), rgba(216, 161, 95, 0));
+      pointer-events: none;
     }
     .hero h1 {
       margin: 0 0 8px;
-      font-size: clamp(2rem, 5vw, 3.6rem);
-      line-height: 0.95;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(2.1rem, 5vw, 4rem);
+      line-height: 0.92;
       font-weight: 700;
-      letter-spacing: -0.03em;
+      letter-spacing: -0.04em;
     }
     .hero p {
       margin: 0;
       color: var(--muted);
-      max-width: 720px;
+      max-width: 780px;
+      font-size: 1rem;
     }
     .grid {
       display: grid;
-      grid-template-columns: 340px 1fr;
-      gap: 20px;
+      grid-template-columns: 360px minmax(0, 1fr);
+      gap: 24px;
     }
     .main-stack {
       display: grid;
-      gap: 20px;
+      gap: 24px;
     }
     .panel {
-      padding: 18px;
+      padding: 22px;
     }
     label {
       display: block;
@@ -73,12 +92,12 @@
     }
     input, textarea, select, button {
       width: 100%;
-      border-radius: 12px;
+      border-radius: 14px;
       border: 1px solid var(--line);
-      padding: 11px 12px;
+      padding: 12px 13px;
       font: inherit;
       color: var(--text);
-      background: #fffdfa;
+      background: #fffdf9;
     }
     textarea {
       min-height: 90px;
@@ -86,20 +105,21 @@
     }
     button {
       cursor: pointer;
-      background: var(--accent);
-      color: #fff8f0;
+      background: linear-gradient(135deg, var(--accent), #c97a3f);
+      color: #fff9f2;
       border: 0;
       font-weight: 700;
+      box-shadow: 0 10px 18px rgba(181, 100, 47, 0.22);
     }
     button.secondary {
-      background: var(--accent-2);
+      background: linear-gradient(135deg, var(--accent-2), #28675f);
     }
     button.danger {
-      background: var(--danger);
+      background: linear-gradient(135deg, var(--danger), #c94c4c);
     }
     .stack {
       display: grid;
-      gap: 12px;
+      gap: 14px;
     }
     .toolbar {
       display: flex;
@@ -115,16 +135,31 @@
       min-height: 20px;
       color: var(--muted);
     }
+    .sidebar {
+      align-self: start;
+      position: sticky;
+      top: 24px;
+      background: var(--panel-strong);
+    }
+    .sidebar .eyebrow {
+      margin: 0 0 10px;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-size: 0.76rem;
+      font-weight: 800;
+    }
     .table-wrap {
       overflow: auto;
-      border-radius: 14px;
+      border-radius: 18px;
       border: 1px solid var(--line);
+      background: #fffdf9;
     }
     table {
       width: 100%;
       border-collapse: collapse;
-      min-width: 760px;
-      background: #fffdfa;
+      min-width: 840px;
+      background: #fffdf9;
     }
     th, td {
       padding: 12px;
@@ -137,6 +172,7 @@
       color: var(--muted);
       text-transform: uppercase;
       letter-spacing: 0.08em;
+      background: rgba(216, 161, 95, 0.12);
     }
     tr:hover td {
       background: rgba(170, 92, 45, 0.05);
@@ -163,7 +199,8 @@
     }
     .section-head h2 {
       margin: 0;
-      font-size: 1.1rem;
+      font-size: 1.2rem;
+      font-family: Georgia, "Times New Roman", serif;
     }
     .section-head p {
       margin: 4px 0 0;
@@ -181,9 +218,61 @@
       width: auto;
       min-width: 160px;
     }
+    .tabs {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    .tab-button {
+      width: auto;
+      min-width: 180px;
+      background: rgba(255, 255, 255, 0.65);
+      color: var(--text);
+      border: 1px solid var(--line);
+      box-shadow: none;
+    }
+    .tab-button.active {
+      background: linear-gradient(135deg, var(--accent-2), #2f746c);
+      color: #fffdf8;
+      border-color: transparent;
+      box-shadow: 0 10px 18px rgba(28, 77, 70, 0.18);
+    }
+    .tab-panel {
+      display: none;
+    }
+    .tab-panel.active {
+      display: block;
+      animation: fadeUp 180ms ease;
+    }
+    .kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.55);
+      border: 1px solid rgba(209, 185, 153, 0.8);
+      color: var(--muted);
+      font-size: 0.82rem;
+      margin-bottom: 14px;
+    }
+    @keyframes fadeUp {
+      from {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
     @media (max-width: 900px) {
       .grid {
         grid-template-columns: 1fr;
+      }
+      .sidebar {
+        position: static;
       }
     }
   </style>
@@ -191,12 +280,14 @@
 <body>
   <div class="shell">
     <section class="hero">
+      <div class="kicker">The Gold Standard admin workspace</div>
       <h1>TGS Control Panel</h1>
       <p>Use your admin token to manage leaderboard entries and review first-launch player profiles from the same backend.</p>
     </section>
 
     <div class="grid">
-      <section class="panel stack">
+      <section class="panel stack sidebar">
+        <div class="eyebrow">Access</div>
         <div>
           <label for="token">Admin Token</label>
           <input id="token" type="password" placeholder="Bearer token">
@@ -244,68 +335,80 @@
         <section class="panel">
           <div class="section-head">
             <div>
-              <h2>Leaderboard Entries</h2>
-              <p>Entries for the selected public key. Click a row to edit it.</p>
+              <h2>Workspace</h2>
+              <p>Switch between leaderboard management and profile review without losing your place.</p>
             </div>
           </div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Rank</th>
-                  <th>Username</th>
-                  <th>Score</th>
-                  <th>Extra</th>
-                  <th>User GUID</th>
-                  <th>Updated</th>
-                </tr>
-              </thead>
-              <tbody id="entriesBody">
-                <tr><td colspan="6" class="small">No entries loaded yet.</td></tr>
-              </tbody>
-            </table>
+          <div class="tabs">
+            <button id="tabEntries" class="tab-button active" type="button">Leaderboard Entries</button>
+            <button id="tabProfiles" class="tab-button" type="button">Player Profiles</button>
           </div>
-        </section>
+          <div id="panelEntries" class="tab-panel active">
+            <div class="section-head">
+              <div>
+                <h2>Leaderboard Entries</h2>
+                <p>Entries for the selected public key. Click a row to edit it.</p>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Rank</th>
+                    <th>Username</th>
+                    <th>Score</th>
+                    <th>Extra</th>
+                    <th>User GUID</th>
+                    <th>Updated</th>
+                  </tr>
+                </thead>
+                <tbody id="entriesBody">
+                  <tr><td colspan="6" class="small">No entries loaded yet.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
 
-        <section class="panel">
-          <div class="section-head">
-            <div>
-              <h2>Player Profiles</h2>
-              <p>Review Get Started submissions and sort them by date, name, email, or country.</p>
+          <div id="panelProfiles" class="tab-panel">
+            <div class="section-head">
+              <div>
+                <h2>Player Profiles</h2>
+                <p>Review Get Started submissions and sort them by date, name, email, or country.</p>
+              </div>
+              <div class="inline-controls">
+                <select id="profileSort">
+                  <option value="createdAt-desc">Newest First</option>
+                  <option value="createdAt-asc">Oldest First</option>
+                  <option value="name-asc">Name A-Z</option>
+                  <option value="name-desc">Name Z-A</option>
+                  <option value="email-asc">Email A-Z</option>
+                  <option value="email-desc">Email Z-A</option>
+                  <option value="country-asc">Country A-Z</option>
+                  <option value="country-desc">Country Z-A</option>
+                </select>
+                <button id="loadProfiles" class="secondary" type="button">Load Profiles</button>
+              </div>
             </div>
-            <div class="inline-controls">
-              <select id="profileSort">
-                <option value="createdAt-desc">Newest First</option>
-                <option value="createdAt-asc">Oldest First</option>
-                <option value="name-asc">Name A-Z</option>
-                <option value="name-desc">Name Z-A</option>
-                <option value="email-asc">Email A-Z</option>
-                <option value="email-desc">Email Z-A</option>
-                <option value="country-asc">Country A-Z</option>
-                <option value="country-desc">Country Z-A</option>
-              </select>
-              <button id="loadProfiles" class="secondary" type="button">Load Profiles</button>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Country</th>
+                    <th>Consent</th>
+                    <th>User GUID</th>
+                    <th>Created</th>
+                    <th>Updated</th>
+                  </tr>
+                </thead>
+                <tbody id="profilesBody">
+                  <tr><td colspan="7" class="small">No profiles loaded yet.</td></tr>
+                </tbody>
+              </table>
             </div>
+            <div id="profilesStatus" class="status"></div>
           </div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Email</th>
-                  <th>Country</th>
-                  <th>Consent</th>
-                  <th>User GUID</th>
-                  <th>Created</th>
-                  <th>Updated</th>
-                </tr>
-              </thead>
-              <tbody id="profilesBody">
-                <tr><td colspan="7" class="small">No profiles loaded yet.</td></tr>
-              </tbody>
-            </table>
-          </div>
-          <div id="profilesStatus" class="status"></div>
         </section>
       </div>
     </div>
@@ -324,6 +427,10 @@
     const profileSortSelect = document.getElementById("profileSort");
     const profilesBody = document.getElementById("profilesBody");
     const profilesStatusNode = document.getElementById("profilesStatus");
+    const tabEntriesButton = document.getElementById("tabEntries");
+    const tabProfilesButton = document.getElementById("tabProfiles");
+    const panelEntries = document.getElementById("panelEntries");
+    const panelProfiles = document.getElementById("panelProfiles");
     let loadedProfiles = [];
 
     tokenInput.value = localStorage.getItem("lbAdminToken") || "";
@@ -339,6 +446,8 @@
     document.getElementById("deleteEntry").addEventListener("click", deleteEntry);
     document.getElementById("newEntry").addEventListener("click", clearForm);
     profileSortSelect.addEventListener("change", () => renderProfiles(sortProfiles(loadedProfiles)));
+    tabEntriesButton.addEventListener("click", () => setActiveTab("entries"));
+    tabProfilesButton.addEventListener("click", () => setActiveTab("profiles"));
     knownKeysSelect.addEventListener("change", () => {
       if (knownKeysSelect.value) {
         publicKeyInput.value = knownKeysSelect.value;
@@ -410,6 +519,7 @@
       try {
         loadedProfiles = await api("/admin/api/player-profiles");
         renderProfiles(sortProfiles(loadedProfiles));
+        setActiveTab("profiles");
         setProfilesStatus(`Loaded ${loadedProfiles.length} profile${loadedProfiles.length === 1 ? "" : "s"}.`);
       } catch (error) {
         setProfilesStatus(error.message, true);
@@ -581,6 +691,14 @@
     function setProfilesStatus(message, isError = false) {
       profilesStatusNode.textContent = message;
       profilesStatusNode.style.color = isError ? "#9d2b2b" : "#6b6158";
+    }
+
+    function setActiveTab(tabName) {
+      const showingEntries = tabName === "entries";
+      panelEntries.classList.toggle("active", showingEntries);
+      panelProfiles.classList.toggle("active", !showingEntries);
+      tabEntriesButton.classList.toggle("active", showingEntries);
+      tabProfilesButton.classList.toggle("active", !showingEntries);
     }
 
     function formatTimestamp(value) {
