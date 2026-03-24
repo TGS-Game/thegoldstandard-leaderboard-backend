@@ -287,7 +287,18 @@ class LeaderboardService {
       return true;
     }
 
-    throw createHttpError(400, "consentAccepted must be true.");
+    if (
+      consentAccepted === false ||
+      consentAccepted === 0 ||
+      consentAccepted === "0" ||
+      consentAccepted === "false" ||
+      consentAccepted === "" ||
+      consentAccepted == null
+    ) {
+      return false;
+    }
+
+    throw createHttpError(400, "consentAccepted must be a boolean value.");
   }
 
   normalizeOptionalUserGuid(userGuid) {

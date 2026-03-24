@@ -238,6 +238,12 @@
       border-color: transparent;
       box-shadow: 0 10px 18px rgba(28, 77, 70, 0.18);
     }
+    .tab-button:disabled,
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+      box-shadow: none;
+    }
     .tab-panel {
       display: none;
     }
@@ -291,6 +297,9 @@
         <div>
           <label for="token">Admin Token</label>
           <input id="token" type="password" placeholder="Bearer token">
+        </div>
+        <div class="toolbar">
+          <button id="verifyAccess" type="button">Verify Admin Access</button>
         </div>
         <div>
           <label for="publicKey">Leaderboard Public Key</label>
@@ -373,7 +382,7 @@
             <div class="section-head">
               <div>
                 <h2>Player Profiles</h2>
-                <p>Review Get Started submissions and sort them by date, name, email, or country.</p>
+                <p>Review Get Started submissions and sort them by date, name, email, or country. This section unlocks after the admin token is verified.</p>
               </div>
               <div class="inline-controls">
                 <select id="profileSort">
@@ -431,17 +440,24 @@
     const tabProfilesButton = document.getElementById("tabProfiles");
     const panelEntries = document.getElementById("panelEntries");
     const panelProfiles = document.getElementById("panelProfiles");
+    const verifyAccessButton = document.getElementById("verifyAccess");
+    const loadProfilesButton = document.getElementById("loadProfiles");
+    let isAdminVerified = false;
     let loadedProfiles = [];
 
     tokenInput.value = localStorage.getItem("lbAdminToken") || "";
     publicKeyInput.value = localStorage.getItem("lbAdminPublicKey") || "";
 
-    tokenInput.addEventListener("change", () => localStorage.setItem("lbAdminToken", tokenInput.value.trim()));
+    tokenInput.addEventListener("change", () => {
+      localStorage.setItem("lbAdminToken", tokenInput.value.trim());
+      invalidateAdminVerification();
+    });
     publicKeyInput.addEventListener("change", () => localStorage.setItem("lbAdminPublicKey", publicKeyInput.value.trim()));
 
+    verifyAccessButton.addEventListener("click", verifyAdminAccess);
     document.getElementById("loadKeys").addEventListener("click", loadPublicKeys);
     document.getElementById("loadEntries").addEventListener("click", loadEntries);
-    document.getElementById("loadProfiles").addEventListener("click", loadProfiles);
+    loadProfilesButton.addEventListener("click", loadProfiles);
     document.getElementById("saveEntry").addEventListener("click", saveEntry);
     document.getElementById("deleteEntry").addEventListener("click", deleteEntry);
     document.getElementById("newEntry").addEventListener("click", clearForm);
@@ -454,6 +470,7 @@
         localStorage.setItem("lbAdminPublicKey", publicKeyInput.value.trim());
       }
     });
+    updateAdminGateUi();
 
     async function api(path, options = {}) {
       const token = tokenInput.value.trim();
@@ -476,6 +493,19 @@
       }
 
       return text ? JSON.parse(text) : null;
+    }
+
+    async function verifyAdminAccess() {
+      setStatus("Verifying admin token...");
+      try {
+        await api("/admin/api/public-keys");
+        isAdminVerified = true;
+        updateAdminGateUi();
+        setStatus("Admin access verified.");
+      } catch (error) {
+        invalidateAdminVerification();
+        setStatus(error.message, true);
+      }
     }
 
     async function loadPublicKeys() {
@@ -515,6 +545,10 @@
     }
 
     async function loadProfiles() {
+      if (!requireVerifiedAdminForProfiles()) {
+        return;
+      }
+
       setProfilesStatus("Loading player profiles...");
       try {
         loadedProfiles = await api("/admin/api/player-profiles");
@@ -694,6 +728,13 @@
     }
 
     function setActiveTab(tabName) {
+      if (tabName === "profiles" && !requireVerifiedAdminForProfiles()) {
+        if (!panelEntries.classList.contains("active")) {
+          setActiveTab("entries");
+        }
+        return;
+      }
+
       const showingEntries = tabName === "entries";
       panelEntries.classList.toggle("active", showingEntries);
       panelProfiles.classList.toggle("active", !showingEntries);
@@ -717,6 +758,28 @@
         .replaceAll(">", "&gt;")
         .replaceAll("\"", "&quot;")
         .replaceAll("'", "&#039;");
+    }
+
+    function requireVerifiedAdminForProfiles() {
+      if (isAdminVerified) {
+        return true;
+      }
+
+      setProfilesStatus("Verify the admin token before opening player profiles.", true);
+      return false;
+    }
+
+    function invalidateAdminVerification() {
+      isAdminVerified = false;
+      updateAdminGateUi();
+      if (panelProfiles.classList.contains("active")) {
+        setActiveTab("entries");
+      }
+    }
+
+    function updateAdminGateUi() {
+      tabProfilesButton.disabled = !isAdminVerified;
+      loadProfilesButton.disabled = !isAdminVerified;
     }
   </script>
 </body>
