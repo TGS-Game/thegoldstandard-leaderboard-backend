@@ -128,6 +128,12 @@ class LeaderboardService {
     });
   }
 
+  async checkHealth() {
+    // Returns true only if the underlying data store responds.
+    await this.storage.ping();
+    return true;
+  }
+
   async getAdminPublicKeys() {
     return this.storage.listPublicKeys();
   }

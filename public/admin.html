@@ -5,309 +5,183 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>TGS Control Panel</title>
   <style>
+    /* Visual language matched to the hub: cream background, navy + gold,
+       Georgia serif headings, soft rounded white cards, mobile-friendly. */
     :root {
-      --bg: #efe4d1;
-      --panel: rgba(255, 250, 242, 0.94);
-      --panel-strong: rgba(248, 239, 226, 0.96);
-      --line: #d1b999;
-      --text: #201814;
-      --muted: #6c5f54;
-      --accent: #b5642f;
-      --accent-2: #1c4d46;
-      --accent-3: #d8a15f;
-      --danger: #a53030;
-      --shadow: 0 24px 50px rgba(60, 34, 12, 0.12);
+      --navy: #173f77;
+      --navy-deep: #102e59;
+      --gold: #bb9053;
+      --gold-dark: #9c7440;
+      --cream: #f4f0e8;
+      --cream-deep: #ece6db;
+      --surface: #ffffff;
+      --text: #23364d;
+      --text-dim: #5b6b7c;
+      --border: rgba(23, 63, 119, 0.14);
+      --border-strong: rgba(23, 63, 119, 0.22);
+      --green: #5b9373;
+      --red: #bd5e52;
+      --grey: #93a1b3;
+      --radius: 22px;
+      --radius-sm: 14px;
+      --shadow: 0 18px 45px rgba(16, 46, 89, 0.16);
+      --shadow-soft: 0 8px 22px rgba(16, 46, 89, 0.1);
     }
     * { box-sizing: border-box; }
+    html, body { height: 100%; }
     body {
       margin: 0;
-      font-family: "Trebuchet MS", "Avenir Next", sans-serif;
+      font-family: "Segoe UI", Arial, sans-serif;
       color: var(--text);
       background:
-        radial-gradient(circle at top left, rgba(181, 100, 47, 0.28), transparent 24%),
-        radial-gradient(circle at top right, rgba(28, 77, 70, 0.15), transparent 28%),
-        linear-gradient(160deg, #f5ebdd 0%, #efe0c7 52%, #e4d2bb 100%);
+        linear-gradient(rgba(244, 240, 232, 0.92), rgba(244, 240, 232, 0.92)),
+        linear-gradient(135deg, #eef2f7 0%, #f4f0e8 100%);
       min-height: 100vh;
     }
-    .shell {
-      max-width: 1380px;
-      margin: 0 auto;
-      padding: 28px;
-    }
-    .hero, .panel {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 24px;
-      box-shadow: var(--shadow);
-      backdrop-filter: blur(8px);
-    }
-    .hero {
-      padding: 28px;
+    h1, h2, h3 { font-family: Georgia, "Times New Roman", serif; letter-spacing: -0.02em; }
+    a { color: var(--navy); }
+
+    .shell { max-width: 1380px; margin: 0 auto; padding: 28px; }
+
+    /* Top bar */
+    .topbar {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      background: var(--navy);
+      border: 1px solid var(--navy-deep);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-soft);
+      padding: 18px 24px;
       margin-bottom: 24px;
-      position: relative;
-      overflow: hidden;
+      border-bottom: 4px solid var(--gold);
     }
-    .hero::after {
-      content: "";
-      position: absolute;
-      right: -60px;
-      top: -70px;
-      width: 240px;
-      height: 240px;
-      border-radius: 50%;
-      background: radial-gradient(circle, rgba(216, 161, 95, 0.35), rgba(216, 161, 95, 0));
-      pointer-events: none;
+    .topbar .brand { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; }
+    .topbar .brand .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--gold); box-shadow: 0 0 12px rgba(187, 144, 83, 0.7); flex-shrink: 0; }
+    .topbar .brand .title { color: #fff; font-family: Georgia, "Times New Roman", serif; font-size: 18px; font-weight: 700; }
+    .topbar .brand .sub { color: rgba(255,255,255,0.6); font-size: 12px; letter-spacing: 0.04em; }
+
+    .hero { margin-bottom: 24px; }
+    .hero h1 { margin: 0 0 6px; font-size: clamp(1.9rem, 4vw, 2.6rem); color: var(--navy); }
+    .hero p { margin: 0; color: var(--text-dim); max-width: 780px; font-size: 1rem; line-height: 1.6; }
+    .hero p::before {
+      content: ""; display: block; width: 92px; height: 4px;
+      background: var(--gold); border-radius: 999px; margin: 8px 0 14px;
     }
-    .hero h1 {
-      margin: 0 0 8px;
-      font-family: Georgia, "Times New Roman", serif;
-      font-size: clamp(2.1rem, 5vw, 4rem);
-      line-height: 0.92;
-      font-weight: 700;
-      letter-spacing: -0.04em;
-    }
-    .hero p {
-      margin: 0;
-      color: var(--muted);
-      max-width: 780px;
-      font-size: 1rem;
-    }
-    .grid {
-      display: grid;
-      grid-template-columns: 360px minmax(0, 1fr);
-      gap: 24px;
-    }
-    .main-stack {
-      display: grid;
-      gap: 24px;
-    }
-    .panel {
+
+    .grid { display: grid; grid-template-columns: 360px minmax(0, 1fr); gap: 24px; }
+    .main-stack { display: grid; gap: 24px; }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-soft);
       padding: 22px;
     }
-    label {
-      display: block;
-      margin: 0 0 6px;
-      font-size: 0.92rem;
-      color: var(--muted);
-    }
-    input, textarea, select, button {
+    .sidebar { align-self: start; position: sticky; top: 24px; display: grid; gap: 14px; }
+    .eyebrow { margin: 0; color: var(--gold-dark); text-transform: uppercase; letter-spacing: 0.12em; font-size: 0.76rem; font-weight: 800; }
+
+    label { display: block; margin: 0 0 7px; font-size: 0.9rem; font-weight: 700; color: var(--navy-deep); }
+    input, textarea, select {
       width: 100%;
-      border-radius: 14px;
-      border: 1px solid var(--line);
-      padding: 12px 13px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      padding: 12px 14px;
       font: inherit;
+      font-size: 15px;
       color: var(--text);
-      background: #fffdf9;
+      background: rgba(255, 255, 255, 0.95);
+      transition: border-color 0.15s, box-shadow 0.15s;
     }
-    textarea {
-      min-height: 90px;
-      resize: vertical;
-    }
-    button {
-      cursor: pointer;
-      background: linear-gradient(135deg, var(--accent), #c97a3f);
-      color: #fff9f2;
-      border: 0;
-      font-weight: 700;
-      box-shadow: 0 10px 18px rgba(181, 100, 47, 0.22);
-    }
-    button.secondary {
-      background: linear-gradient(135deg, var(--accent-2), #28675f);
-    }
-    button.danger {
-      background: linear-gradient(135deg, var(--danger), #c94c4c);
-    }
-    .stack {
-      display: grid;
-      gap: 14px;
-    }
-    .toolbar {
-      display: flex;
-      gap: 10px;
-      flex-wrap: wrap;
-      margin-bottom: 14px;
-    }
-    .toolbar > * {
-      flex: 1 1 180px;
-    }
-    .status {
-      margin-top: 10px;
-      min-height: 20px;
-      color: var(--muted);
-    }
-    .sidebar {
-      align-self: start;
-      position: sticky;
-      top: 24px;
-      background: var(--panel-strong);
-    }
-    .sidebar .eyebrow {
-      margin: 0 0 10px;
-      color: var(--accent);
-      text-transform: uppercase;
-      letter-spacing: 0.12em;
-      font-size: 0.76rem;
-      font-weight: 800;
-    }
-    .table-wrap {
-      overflow: auto;
-      border-radius: 18px;
-      border: 1px solid var(--line);
-      background: #fffdf9;
-    }
-    table {
+    input:focus, textarea:focus, select:focus { outline: none; border-color: rgba(187, 144, 83, 0.75); box-shadow: 0 0 0 4px rgba(187, 144, 83, 0.14); }
+    textarea { min-height: 84px; resize: vertical; }
+
+    .btn {
       width: 100%;
-      border-collapse: collapse;
-      min-width: 840px;
-      background: #fffdf9;
+      cursor: pointer;
+      font: inherit;
+      font-weight: 700;
+      border-radius: 10px;
+      padding: 11px 16px;
+      border: 1px solid var(--border-strong);
+      background: rgba(23, 63, 119, 0.06);
+      color: var(--navy);
+      transition: background 0.15s, transform 0.15s, border-color 0.15s, color 0.15s;
     }
-    th, td {
-      padding: 12px;
-      border-bottom: 1px solid var(--line);
-      text-align: left;
-      vertical-align: top;
-    }
-    th {
-      font-size: 0.84rem;
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      background: rgba(216, 161, 95, 0.12);
-    }
-    tr:hover td {
-      background: rgba(170, 92, 45, 0.05);
-    }
-    .small {
-      color: var(--muted);
-      font-size: 0.86rem;
-    }
-    .actions {
-      display: flex;
-      gap: 8px;
-    }
-    .actions button {
-      width: auto;
-      min-width: 90px;
-    }
-    .section-head {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 12px;
-      margin-bottom: 14px;
-      flex-wrap: wrap;
-    }
-    .section-head h2 {
-      margin: 0;
-      font-size: 1.2rem;
-      font-family: Georgia, "Times New Roman", serif;
-    }
-    .section-head p {
-      margin: 4px 0 0;
-      color: var(--muted);
-      font-size: 0.9rem;
-    }
-    .inline-controls {
-      display: flex;
-      gap: 10px;
-      align-items: center;
-      flex-wrap: wrap;
-    }
-    .inline-controls select,
-    .inline-controls button {
-      width: auto;
-      min-width: 160px;
-    }
-    .tabs {
-      display: flex;
-      gap: 10px;
-      margin-bottom: 16px;
-      flex-wrap: wrap;
-    }
-    .tab-button {
-      width: auto;
-      min-width: 180px;
-      background: rgba(255, 255, 255, 0.65);
-      color: var(--text);
-      border: 1px solid var(--line);
-      box-shadow: none;
-    }
-    .tab-button.active {
-      background: linear-gradient(135deg, var(--accent-2), #2f746c);
-      color: #fffdf8;
-      border-color: transparent;
-      box-shadow: 0 10px 18px rgba(28, 77, 70, 0.18);
-    }
-    .tab-button:disabled,
-    button:disabled {
-      cursor: not-allowed;
-      opacity: 0.55;
-      box-shadow: none;
-    }
-    .tab-panel {
-      display: none;
-    }
-    .tab-panel.active {
-      display: block;
-      animation: fadeUp 180ms ease;
-    }
-    .kicker {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 8px 12px;
-      border-radius: 999px;
-      background: rgba(255, 255, 255, 0.55);
-      border: 1px solid rgba(209, 185, 153, 0.8);
-      color: var(--muted);
-      font-size: 0.82rem;
-      margin-bottom: 14px;
-    }
-    @keyframes fadeUp {
-      from {
-        opacity: 0;
-        transform: translateY(8px);
-      }
-      to {
-        opacity: 1;
-        transform: translateY(0);
-      }
-    }
+    .btn:hover { background: rgba(23, 63, 119, 0.12); transform: translateY(-1px); }
+    .btn-primary { background: var(--gold); color: #fff; border-color: var(--gold); letter-spacing: 0.03em; box-shadow: 0 10px 20px rgba(187, 144, 83, 0.22); }
+    .btn-primary:hover { background: var(--gold-dark); border-color: var(--gold-dark); color: #fff; }
+    .btn-danger { background: rgba(189, 94, 82, 0.1); color: #a3271f; border-color: rgba(189, 94, 82, 0.4); }
+    .btn-danger:hover { background: var(--red); color: #fff; border-color: var(--red); }
+    .btn-logout { width: auto; padding: 9px 16px; background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.2); color: #fff; }
+    .btn-logout:hover { background: rgba(255,255,255,0.18); color: #fff; }
+    .btn:disabled { cursor: not-allowed; opacity: 0.55; box-shadow: none; transform: none; }
+
+    .toolbar { display: flex; gap: 10px; flex-wrap: wrap; }
+    .toolbar > * { flex: 1 1 150px; }
+    .divider { border: 0; border-top: 1px solid var(--border); margin: 4px 0; }
+    .status { margin-top: 8px; min-height: 20px; color: var(--text-dim); font-size: 14px; }
+
+    .section-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+    .section-head h2 { margin: 0; font-size: 1.3rem; color: var(--navy); }
+    .section-head p { margin: 4px 0 0; color: var(--text-dim); font-size: 0.92rem; line-height: 1.5; }
+    .inline-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .inline-controls select, .inline-controls .btn { width: auto; min-width: 160px; }
+
+    .tabs { display: flex; gap: 10px; margin-bottom: 18px; flex-wrap: wrap; }
+    .tab-button { width: auto; min-width: 170px; background: rgba(255, 255, 255, 0.7); color: var(--text); border: 1px solid var(--border); box-shadow: none; }
+    .tab-button.active { background: var(--navy); color: #fff; border-color: var(--navy); box-shadow: 0 10px 18px rgba(16, 46, 89, 0.18); }
+
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; animation: fadeUp 180ms ease; }
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+    .table-wrap { overflow: auto; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); }
+    table { width: 100%; border-collapse: collapse; min-width: 840px; }
+    th, td { padding: 12px 14px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+    th { font-size: 0.8rem; color: var(--gold-dark); text-transform: uppercase; letter-spacing: 0.08em; background: rgba(187, 144, 83, 0.1); font-weight: 700; }
+    tbody tr { cursor: default; }
+    #entriesBody tr { cursor: pointer; }
+    tr:hover td { background: rgba(23, 63, 119, 0.04); }
+    .small { color: var(--text-dim); font-size: 0.88rem; }
+
     @media (max-width: 900px) {
-      .grid {
-        grid-template-columns: 1fr;
-      }
-      .sidebar {
-        position: static;
-      }
+      .shell { padding: 18px; }
+      .grid { grid-template-columns: 1fr; }
+      .sidebar { position: static; }
+      .hero h1 { font-size: 1.8rem; }
     }
   </style>
 </head>
 <body>
   <div class="shell">
+    <div class="topbar">
+      <div class="brand">
+        <span class="dot"></span>
+        <div>
+          <div class="title">The Gold Standard</div>
+          <div class="sub">Leaderboard admin workspace</div>
+        </div>
+      </div>
+      <button id="logout" class="btn btn-logout" type="button">Log out</button>
+    </div>
+
     <section class="hero">
-      <div class="kicker">The Gold Standard admin workspace</div>
       <h1>TGS Control Panel</h1>
-      <p>Use your admin token to manage leaderboard entries and review first-launch player profiles from the same backend.</p>
+      <p>Manage leaderboard entries and review first-launch player profiles from the same backend.</p>
     </section>
 
     <div class="grid">
-      <section class="panel stack sidebar">
-        <div class="eyebrow">Access</div>
-        <div>
-          <label for="token">Admin Token</label>
-          <input id="token" type="password" placeholder="Bearer token">
-        </div>
-        <div class="toolbar">
-          <button id="verifyAccess" type="button">Verify Admin Access</button>
-        </div>
+      <section class="card sidebar">
+        <div class="eyebrow">Leaderboard</div>
         <div>
           <label for="publicKey">Leaderboard Public Key</label>
           <input id="publicKey" type="text" placeholder="ff61800f61ee...">
         </div>
         <div class="toolbar">
-          <button id="loadEntries" class="secondary" type="button">Load Entries</button>
-          <button id="loadKeys" type="button">Load Keys</button>
+          <button id="loadEntries" class="btn btn-primary" type="button">Load Entries</button>
+          <button id="loadKeys" class="btn" type="button">Load Keys</button>
         </div>
         <div>
           <label for="knownKeys">Known Public Keys</label>
@@ -315,7 +189,8 @@
             <option value="">Select a key</option>
           </select>
         </div>
-        <hr style="width: 100%; border: 0; border-top: 1px solid var(--line);">
+        <hr class="divider">
+        <div class="eyebrow">Entry</div>
         <div>
           <label for="userGuid">User GUID</label>
           <input id="userGuid" type="text" placeholder="player GUID">
@@ -333,15 +208,17 @@
           <textarea id="extra" placeholder="yes"></textarea>
         </div>
         <div class="toolbar">
-          <button id="saveEntry" type="button">Save Entry</button>
-          <button id="newEntry" class="secondary" type="button">New Form</button>
-          <button id="deleteEntry" class="danger" type="button">Delete Entry</button>
+          <button id="saveEntry" class="btn btn-primary" type="button">Save Entry</button>
+          <button id="newEntry" class="btn" type="button">New Form</button>
+        </div>
+        <div class="toolbar">
+          <button id="deleteEntry" class="btn btn-danger" type="button">Delete Entry</button>
         </div>
         <div id="status" class="status"></div>
       </section>
 
       <div class="main-stack">
-        <section class="panel">
+        <section class="card">
           <div class="section-head">
             <div>
               <h2>Workspace</h2>
@@ -349,9 +226,10 @@
             </div>
           </div>
           <div class="tabs">
-            <button id="tabEntries" class="tab-button active" type="button">Leaderboard Entries</button>
-            <button id="tabProfiles" class="tab-button" type="button">Player Profiles</button>
+            <button id="tabEntries" class="btn tab-button active" type="button">Leaderboard Entries</button>
+            <button id="tabProfiles" class="btn tab-button" type="button">Player Profiles</button>
           </div>
+
           <div id="panelEntries" class="tab-panel active">
             <div class="section-head">
               <div>
@@ -382,7 +260,7 @@
             <div class="section-head">
               <div>
                 <h2>Player Profiles</h2>
-                <p>Review Get Started submissions and sort them by date, name, email, or country. This section unlocks after the admin token is verified.</p>
+                <p>Review Get Started submissions and sort them by date, name, email, or country.</p>
               </div>
               <div class="inline-controls">
                 <select id="profileSort">
@@ -395,7 +273,7 @@
                   <option value="country-asc">Country A-Z</option>
                   <option value="country-desc">Country Z-A</option>
                 </select>
-                <button id="loadProfiles" class="secondary" type="button">Load Profiles</button>
+                <button id="loadProfiles" class="btn btn-primary" type="button">Load Profiles</button>
               </div>
             </div>
             <div class="table-wrap">
@@ -424,7 +302,6 @@
   </div>
 
   <script>
-    const tokenInput = document.getElementById("token");
     const publicKeyInput = document.getElementById("publicKey");
     const knownKeysSelect = document.getElementById("knownKeys");
     const userGuidInput = document.getElementById("userGuid");
@@ -440,27 +317,18 @@
     const tabProfilesButton = document.getElementById("tabProfiles");
     const panelEntries = document.getElementById("panelEntries");
     const panelProfiles = document.getElementById("panelProfiles");
-    const verifyAccessButton = document.getElementById("verifyAccess");
-    const loadProfilesButton = document.getElementById("loadProfiles");
-    let isAdminVerified = false;
     let loadedProfiles = [];
 
-    tokenInput.value = localStorage.getItem("lbAdminToken") || "";
     publicKeyInput.value = localStorage.getItem("lbAdminPublicKey") || "";
 
-    tokenInput.addEventListener("change", () => {
-      localStorage.setItem("lbAdminToken", tokenInput.value.trim());
-      invalidateAdminVerification();
-    });
     publicKeyInput.addEventListener("change", () => localStorage.setItem("lbAdminPublicKey", publicKeyInput.value.trim()));
-
-    verifyAccessButton.addEventListener("click", verifyAdminAccess);
     document.getElementById("loadKeys").addEventListener("click", loadPublicKeys);
     document.getElementById("loadEntries").addEventListener("click", loadEntries);
-    loadProfilesButton.addEventListener("click", loadProfiles);
+    document.getElementById("loadProfiles").addEventListener("click", loadProfiles);
     document.getElementById("saveEntry").addEventListener("click", saveEntry);
     document.getElementById("deleteEntry").addEventListener("click", deleteEntry);
     document.getElementById("newEntry").addEventListener("click", clearForm);
+    document.getElementById("logout").addEventListener("click", logout);
     profileSortSelect.addEventListener("change", () => renderProfiles(sortProfiles(loadedProfiles)));
     tabEntriesButton.addEventListener("click", () => setActiveTab("entries"));
     tabProfilesButton.addEventListener("click", () => setActiveTab("profiles"));
@@ -470,22 +338,24 @@
         localStorage.setItem("lbAdminPublicKey", publicKeyInput.value.trim());
       }
     });
-    updateAdminGateUi();
 
+    // The page is only served to an authenticated session (or token), so the
+    // browser's session cookie carries auth automatically.
     async function api(path, options = {}) {
-      const token = tokenInput.value.trim();
-      if (!token) {
-        throw new Error("Enter the admin token first.");
-      }
-
       const response = await fetch(path, {
         ...options,
+        credentials: "include",
         headers: {
-          "Authorization": `Bearer ${token}`,
           "Content-Type": "application/json",
           ...(options.headers || {})
         }
       });
+
+      if (response.status === 401) {
+        // Session expired or revoked — bounce back to the login page.
+        window.location.href = "/admin/login";
+        throw new Error("Session expired. Redirecting to sign in.");
+      }
 
       const text = await response.text();
       if (!response.ok) {
@@ -495,17 +365,12 @@
       return text ? JSON.parse(text) : null;
     }
 
-    async function verifyAdminAccess() {
-      setStatus("Verifying admin token...");
-      try {
-        await api("/admin/api/public-keys");
-        isAdminVerified = true;
-        updateAdminGateUi();
-        setStatus("Admin access verified.");
-      } catch (error) {
-        invalidateAdminVerification();
-        setStatus(error.message, true);
-      }
+    function logout() {
+      const form = document.createElement("form");
+      form.method = "POST";
+      form.action = "/admin/logout";
+      document.body.appendChild(form);
+      form.submit();
     }
 
     async function loadPublicKeys() {
@@ -545,10 +410,6 @@
     }
 
     async function loadProfiles() {
-      if (!requireVerifiedAdminForProfiles()) {
-        return;
-      }
-
       setProfilesStatus("Loading player profiles...");
       try {
         loadedProfiles = await api("/admin/api/player-profiles");
@@ -595,8 +456,7 @@
       setStatus("Deleting entry...");
       try {
         await api(`/admin/api/entries/${encodeURIComponent(publicKey)}/${encodeURIComponent(userGuid)}`, {
-          method: "DELETE",
-          headers: {}
+          method: "DELETE"
         });
         clearForm();
         await loadEntries();
@@ -719,22 +579,15 @@
 
     function setStatus(message, isError = false) {
       statusNode.textContent = message;
-      statusNode.style.color = isError ? "#9d2b2b" : "#6b6158";
+      statusNode.style.color = isError ? "#a3271f" : "#5b6b7c";
     }
 
     function setProfilesStatus(message, isError = false) {
       profilesStatusNode.textContent = message;
-      profilesStatusNode.style.color = isError ? "#9d2b2b" : "#6b6158";
+      profilesStatusNode.style.color = isError ? "#a3271f" : "#5b6b7c";
     }
 
     function setActiveTab(tabName) {
-      if (tabName === "profiles" && !requireVerifiedAdminForProfiles()) {
-        if (!panelEntries.classList.contains("active")) {
-          setActiveTab("entries");
-        }
-        return;
-      }
-
       const showingEntries = tabName === "entries";
       panelEntries.classList.toggle("active", showingEntries);
       panelProfiles.classList.toggle("active", !showingEntries);
@@ -758,28 +611,6 @@
         .replaceAll(">", "&gt;")
         .replaceAll("\"", "&quot;")
         .replaceAll("'", "&#039;");
-    }
-
-    function requireVerifiedAdminForProfiles() {
-      if (isAdminVerified) {
-        return true;
-      }
-
-      setProfilesStatus("Verify the admin token before opening player profiles.", true);
-      return false;
-    }
-
-    function invalidateAdminVerification() {
-      isAdminVerified = false;
-      updateAdminGateUi();
-      if (panelProfiles.classList.contains("active")) {
-        setActiveTab("entries");
-      }
-    }
-
-    function updateAdminGateUi() {
-      tabProfilesButton.disabled = !isAdminVerified;
-      loadProfilesButton.disabled = !isAdminVerified;
     }
   </script>
 </body>

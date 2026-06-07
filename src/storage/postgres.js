@@ -204,6 +204,12 @@ class PostgresStorage {
     ]);
   }
 
+  async ping() {
+    // Lightweight liveness check against the actual data store.
+    await this.pool.query("SELECT 1");
+    return true;
+  }
+
   async listPlayerProfiles() {
     const result = await this.pool.query(`
       SELECT

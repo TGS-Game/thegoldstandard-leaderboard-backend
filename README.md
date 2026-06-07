@@ -51,9 +51,47 @@ http://localhost:8787
 - `DATABASE_URL`: Postgres connection string. If blank, SQLite is used.
 - `SQLITE_PATH`: SQLite database path when Postgres is not used.
 - `ALLOWED_PUBLIC_KEYS`: Optional comma-separated whitelist of leaderboard public keys.
-- `ADMIN_TOKEN`: Required to enable the admin panel and admin API.
+- `ADMIN_TOKEN`: Enables the admin panel/API via Bearer / `X-Admin-Token` header auth.
+- `ADMIN_PASSWORD`: Enables password session login for `/admin`.
+- `SESSION_SECRET`: Secret used to sign the admin session cookie. Required for session login and SSO.
+- `SESSION_TTL_SECONDS`: Session lifetime. Default `43200` (12h).
+- `LEADERBOARD_SSO_SECRET`: Shared secret for hub single sign-on (HS256 JWT).
+- `LEADERBOARD_SSO_AUDIENCE`: Expected JWT `aud`. Default `leaderboard`.
+- `HUB_ORIGIN`: Origin allowed to embed `/admin` in an iframe (CSP `frame-ancestors`).
 - `MAX_USERNAME_LENGTH`: Default `127`.
 - `MAX_EXTRA_LENGTH`: Default `100`.
+
+## Health Check
+
+- `GET /health`: no auth. Returns `200 {"status":"ok"}` when the data store
+  responds, or `503 {"status":"degraded"}` if it does not.
+
+## Admin Authentication
+
+The admin panel and API accept **either** of these, in parallel:
+
+- A signed session cookie, obtained by logging in at `GET /admin/login` with
+  `ADMIN_PASSWORD`, or via hub SSO at `GET /sso`.
+- The `ADMIN_TOKEN` via `Authorization: Bearer <token>` or `X-Admin-Token`
+  (unchanged; used by programmatic callers).
+
+The session cookie is `HttpOnly; Secure; SameSite=None; Partitioned` so the panel
+works embedded in the hub iframe (including mobile). `GET /admin/login` is the
+only open admin route; everything else under `/admin` requires auth.
+
+### Hub single sign-on (`GET /sso`)
+
+Verifies a short-lived JWT minted by the hub:
+
+- `alg`: `HS256`, signed with `LEADERBOARD_SSO_SECRET`
+- `aud`: `leaderboard`
+- `exp`: short-lived (~60s)
+- `jti`: unique, one-time-use (replays are rejected)
+
+On success the service sets the session cookie and `302`s to `/admin`. Any
+failure returns `401`. The token is never logged. Admin pages
+(`/admin`, `/admin/login`, `/sso`) send `Content-Security-Policy: frame-ancestors
+<HUB_ORIGIN>`; game-facing endpoints are never framed or gated.
 
 ## Railway Deployment
 

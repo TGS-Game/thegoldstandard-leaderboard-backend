@@ -209,6 +209,12 @@ class SqliteStorage {
     });
   }
 
+  async ping() {
+    // Lightweight liveness check against the actual data store.
+    this.db.prepare("SELECT 1").get();
+    return true;
+  }
+
   async listPlayerProfiles() {
     const rows = this.db.prepare(`
       SELECT

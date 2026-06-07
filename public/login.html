@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TGS Control Panel — Sign in</title>
+  <style>
+    :root {
+      --navy: #173f77;
+      --navy-deep: #102e59;
+      --gold: #bb9053;
+      --gold-dark: #9c7440;
+      --cream: #f4f0e8;
+      --surface: #ffffff;
+      --text: #23364d;
+      --text-dim: #5b6b7c;
+      --border: rgba(23, 63, 119, 0.14);
+      --radius: 22px;
+      --radius-sm: 14px;
+      --shadow: 0 18px 45px rgba(16, 46, 89, 0.16);
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Arial, sans-serif;
+      color: var(--text);
+      background:
+        linear-gradient(rgba(244, 240, 232, 0.92), rgba(244, 240, 232, 0.92)),
+        linear-gradient(135deg, #eef2f7 0%, #f4f0e8 100%);
+      min-height: 100vh;
+    }
+    .login-shell { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+    .login-card {
+      width: 100%;
+      max-width: 380px;
+      background: rgba(255, 255, 255, 0.94);
+      border: 1px solid rgba(255, 255, 255, 0.65);
+      border-radius: var(--radius);
+      padding: 36px 30px 30px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(8px);
+    }
+    .brand { display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 18px; }
+    .brand .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--gold); box-shadow: 0 0 12px rgba(187, 144, 83, 0.7); }
+    .brand .title { font-weight: 700; font-size: 16px; font-family: Georgia, "Times New Roman", serif; color: var(--navy); }
+    h1 { font-family: Georgia, "Times New Roman", serif; font-size: 28px; text-align: center; margin: 0 0 22px; color: var(--navy); letter-spacing: -0.02em; }
+    label { display: block; font-size: 14px; font-weight: 700; color: var(--navy-deep); margin-bottom: 8px; }
+    input {
+      width: 100%;
+      padding: 14px 16px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.95);
+      color: var(--text);
+      font: inherit;
+      font-size: 16px;
+      margin-bottom: 18px;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    input:focus { outline: none; border-color: rgba(187, 144, 83, 0.75); box-shadow: 0 0 0 4px rgba(187, 144, 83, 0.14); }
+    .btn-primary {
+      width: 100%;
+      padding: 14px;
+      font: inherit;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      cursor: pointer;
+      background: var(--gold);
+      color: #fff;
+      border: 1px solid var(--gold);
+      border-radius: 10px;
+      box-shadow: 0 10px 20px rgba(187, 144, 83, 0.22);
+      transition: background 0.15s;
+    }
+    .btn-primary:hover { background: var(--gold-dark); border-color: var(--gold-dark); }
+    .error {
+      background: rgba(189, 94, 82, 0.1);
+      border: 1px solid rgba(189, 94, 82, 0.4);
+      color: #a3271f;
+      padding: 10px 12px;
+      border-radius: var(--radius-sm);
+      font-size: 13px;
+      margin-bottom: 16px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="login-shell">
+    <div class="login-card">
+      <div class="brand"><span class="dot"></span><span class="title">The Gold Standard</span></div>
+      <h1>Control Panel</h1>
+      <div id="error" class="error" style="display:none;">Incorrect password. Please try again.</div>
+      <form method="POST" action="/admin/login">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" autofocus required>
+        <button class="btn-primary" type="submit">Sign in</button>
+      </form>
+    </div>
+  </div>
+  <script>
+    if (new URLSearchParams(location.search).has("error")) {
+      document.getElementById("error").style.display = "block";
+    }
+  </script>
+</body>
+</html>

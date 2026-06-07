@@ -30,6 +30,16 @@ module.exports = {
   sqlitePath,
   allowedPublicKeys: parseCsv(process.env.ALLOWED_PUBLIC_KEYS),
   adminToken: process.env.ADMIN_TOKEN || "",
+  // Session login for the admin panel (used by the embedded hub flow).
+  adminPassword: process.env.ADMIN_PASSWORD || "",
+  sessionSecret: process.env.SESSION_SECRET || "",
+  // Signed-in session lifetime. 12 hours by default.
+  sessionTtlSeconds: parsePositiveInt(process.env.SESSION_TTL_SECONDS, 43200),
+  // Hub single sign-on: short-lived HS256 JWT, aud "leaderboard".
+  ssoSecret: process.env.LEADERBOARD_SSO_SECRET || "",
+  ssoAudience: process.env.LEADERBOARD_SSO_AUDIENCE || "leaderboard",
+  // Origin allowed to embed the admin panel in an iframe (CSP frame-ancestors).
+  hubOrigin: process.env.HUB_ORIGIN || "",
   maxUsernameLength: parsePositiveInt(process.env.MAX_USERNAME_LENGTH, 127),
   maxExtraLength: parsePositiveInt(process.env.MAX_EXTRA_LENGTH, 100)
 };
