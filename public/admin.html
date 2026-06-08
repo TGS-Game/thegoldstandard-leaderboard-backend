@@ -145,8 +145,9 @@
     tr:hover td { background: rgba(23, 63, 119, 0.04); }
     .small { color: var(--text-dim); font-size: 0.88rem; }
 
-    /* Quiet log-out, lower down (out of the title area). */
-    .page-foot { display: flex; justify-content: flex-end; padding-top: 4px; }
+    /* Top-right header cluster: key control + quiet log-out, in line with the
+       title. Wraps below the title on mobile without overlapping it. */
+    .head-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
     .btn-logout { background: transparent; color: var(--text-dim); border-color: var(--border-strong); }
     .btn-logout:hover { background: rgba(23, 63, 119, 0.06); color: var(--navy); }
 
@@ -162,7 +163,10 @@
   <div class="shell">
     <header class="page-head">
       <div class="title-wrap"><h1>TGS Leaderboard</h1></div>
-      <div id="keyControl" class="key-control" aria-live="polite"></div>
+      <div class="head-actions">
+        <div id="keyControl" class="key-control" aria-live="polite"></div>
+        <button id="logout" class="btn btn-logout" type="button">Log out</button>
+      </div>
     </header>
 
     <!-- Entry editor: a single row across the top -->
@@ -271,10 +275,6 @@
         <div id="profilesStatus" class="status"></div>
       </div>
     </section>
-
-    <footer class="page-foot">
-      <button id="logout" class="btn btn-logout" type="button">Log out</button>
-    </footer>
   </div>
 
   <script>

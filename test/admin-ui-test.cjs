@@ -132,6 +132,11 @@ async function main() {
     const sameRow = await evalJs("(()=>{const a=document.getElementById('userGuid').getBoundingClientRect();const b=document.getElementById('score').getBoundingClientRect();return Math.abs(a.top-b.top)<8;})()");
     chk("editor fields are a row across the top", sameRow);
 
+    // Log out lives in the header (top-right), in line with the title, no footer.
+    chk("logout is in the header, no footer", await evalJs("!!document.querySelector('.page-head #logout') && !document.querySelector('.page-foot')"));
+    chk("logout sits above the editor card (top of page)", await evalJs("document.getElementById('logout').getBoundingClientRect().bottom <= document.querySelector('.card').getBoundingClientRect().top"));
+    chk("logout in line with the title (desktop)", await evalJs("(()=>{const l=document.getElementById('logout').getBoundingClientRect();const h=document.querySelector('h1').getBoundingClientRect();return Math.abs(l.top-h.top)<80;})()"));
+
     // --- Create ---
     await evalJs(`(()=>{document.getElementById('userGuid').value='guid-a3';document.getElementById('username').value='Dave';document.getElementById('score').value='500';document.getElementById('extra').value='x';document.getElementById('saveEntry').click();return 1;})()`);
     const created = await waitFor("document.querySelector('#entriesBody').innerText.includes('Dave')");
@@ -169,6 +174,9 @@ async function main() {
     await waitFor("document.querySelectorAll('#entriesBody tr').length >= 1 && !document.querySelector('#entriesBody td.small')");
     const mobileOk = await evalJs("document.documentElement.scrollWidth <= document.documentElement.clientWidth + 2");
     chk("mobile (390px): no page-level horizontal scroll, entries load", mobileOk, `scrollW=${await evalJs("document.documentElement.scrollWidth")} clientW=${await evalJs("document.documentElement.clientWidth")}`);
+    // Logout still in the header and not overlapping the title or key field on mobile.
+    const mobileLogout = await evalJs("(()=>{const l=document.getElementById('logout').getBoundingClientRect();const h=document.querySelector('h1').getBoundingClientRect();const k=document.getElementById('keyControl').getBoundingClientRect();const noOverlap=(a,b)=>(a.right<=b.left||a.left>=b.right||a.bottom<=b.top||a.top>=b.bottom);return !!document.querySelector('.page-head #logout') && noOverlap(l,h) && noOverlap(l,k);})()");
+    chk("mobile: logout in header, no overlap with title or key", mobileLogout);
 
     client.close();
   } finally {
