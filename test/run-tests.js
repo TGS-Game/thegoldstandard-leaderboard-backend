@@ -266,7 +266,7 @@ async function main() {
     sessionCookie = sessionCookiePair(right.setCookie);
 
     const adminPage = await request(base, { path: "/admin", cookie: sessionCookie });
-    check("GET /admin with session -> 200 panel", adminPage.status === 200 && /TGS Control Panel/.test(adminPage.body), `status=${adminPage.status}`);
+    check("GET /admin with session -> 200 panel", adminPage.status === 200 && /TGS Leaderboard/.test(adminPage.body), `status=${adminPage.status}`);
     check("GET /admin (authed) still sets CSP", adminPage.headers["content-security-policy"] === `frame-ancestors ${HUB_ORIGIN}`);
 
     const keys = await request(base, { path: "/admin/api/public-keys", cookie: sessionCookie });

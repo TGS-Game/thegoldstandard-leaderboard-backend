@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>TGS Control Panel</title>
+  <title>TGS Leaderboard</title>
   <style>
     /* Visual language matched to the hub: cream background, navy + gold,
        Georgia serif headings, soft rounded white cards, mobile-friendly. */
@@ -41,36 +41,28 @@
     h1, h2, h3 { font-family: Georgia, "Times New Roman", serif; letter-spacing: -0.02em; }
     a { color: var(--navy); }
 
-    .shell { max-width: 1380px; margin: 0 auto; padding: 28px; }
+    /* Single full-width column — no left/right split, so nothing causes a
+       horizontal scrollbar on desktop. */
+    .shell { max-width: 1380px; margin: 0 auto; padding: 28px; display: grid; gap: 20px; }
 
-    /* Top bar */
-    .topbar {
-      display: flex;
-      align-items: center;
-      gap: 16px;
-      background: var(--navy);
-      border: 1px solid var(--navy-deep);
-      border-radius: var(--radius);
-      box-shadow: var(--shadow-soft);
-      padding: 18px 24px;
-      margin-bottom: 24px;
-      border-bottom: 4px solid var(--gold);
-    }
-    .topbar .brand { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; }
-    .topbar .brand .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--gold); box-shadow: 0 0 12px rgba(187, 144, 83, 0.7); flex-shrink: 0; }
-    .topbar .brand .title { color: #fff; font-family: Georgia, "Times New Roman", serif; font-size: 18px; font-weight: 700; }
-    .topbar .brand .sub { color: rgba(255,255,255,0.6); font-size: 12px; letter-spacing: 0.04em; }
-
-    .hero { margin-bottom: 24px; }
-    .hero h1 { margin: 0 0 6px; font-size: clamp(1.9rem, 4vw, 2.6rem); color: var(--navy); }
-    .hero p { margin: 0; color: var(--text-dim); max-width: 780px; font-size: 1rem; line-height: 1.6; }
-    .hero p::before {
+    /* Simple title row (replaces the old navy banner). Title left, key picker
+       right; wraps on mobile. */
+    .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+    .page-head h1 { margin: 0; font-size: clamp(1.9rem, 4vw, 2.6rem); color: var(--navy); }
+    .page-head .title-wrap::after {
       content: ""; display: block; width: 92px; height: 4px;
-      background: var(--gold); border-radius: 999px; margin: 8px 0 14px;
+      background: var(--gold); border-radius: 999px; margin-top: 10px;
     }
 
-    .grid { display: grid; grid-template-columns: 360px minmax(0, 1fr); gap: 24px; }
-    .main-stack { display: grid; gap: 24px; }
+    /* Header key control: a label (1 key) or a dropdown (several). */
+    .key-control { display: flex; align-items: center; gap: 10px; }
+    .key-control .key-label { font-size: 0.8rem; font-weight: 700; color: var(--gold-dark); text-transform: uppercase; letter-spacing: 0.1em; }
+    .key-chip {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 999px;
+      padding: 8px 14px; font-size: 0.9rem; color: var(--navy); font-weight: 600;
+      max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .key-select { min-width: 220px; max-width: 360px; width: auto; }
 
     .card {
       background: var(--surface);
@@ -79,8 +71,7 @@
       box-shadow: var(--shadow-soft);
       padding: 22px;
     }
-    .sidebar { align-self: start; position: sticky; top: 24px; display: grid; gap: 14px; }
-    .eyebrow { margin: 0; color: var(--gold-dark); text-transform: uppercase; letter-spacing: 0.12em; font-size: 0.76rem; font-weight: 800; }
+    .eyebrow { margin: 0 0 12px; color: var(--gold-dark); text-transform: uppercase; letter-spacing: 0.12em; font-size: 0.76rem; font-weight: 800; }
 
     label { display: block; margin: 0 0 7px; font-size: 0.9rem; font-weight: 700; color: var(--navy-deep); }
     input, textarea, select {
@@ -95,10 +86,9 @@
       transition: border-color 0.15s, box-shadow 0.15s;
     }
     input:focus, textarea:focus, select:focus { outline: none; border-color: rgba(187, 144, 83, 0.75); box-shadow: 0 0 0 4px rgba(187, 144, 83, 0.14); }
-    textarea { min-height: 84px; resize: vertical; }
 
     .btn {
-      width: 100%;
+      width: auto;
       cursor: pointer;
       font: inherit;
       font-weight: 700;
@@ -108,202 +98,187 @@
       background: rgba(23, 63, 119, 0.06);
       color: var(--navy);
       transition: background 0.15s, transform 0.15s, border-color 0.15s, color 0.15s;
+      white-space: nowrap;
     }
     .btn:hover { background: rgba(23, 63, 119, 0.12); transform: translateY(-1px); }
     .btn-primary { background: var(--gold); color: #fff; border-color: var(--gold); letter-spacing: 0.03em; box-shadow: 0 10px 20px rgba(187, 144, 83, 0.22); }
     .btn-primary:hover { background: var(--gold-dark); border-color: var(--gold-dark); color: #fff; }
     .btn-danger { background: rgba(189, 94, 82, 0.1); color: #a3271f; border-color: rgba(189, 94, 82, 0.4); }
     .btn-danger:hover { background: var(--red); color: #fff; border-color: var(--red); }
-    .btn-logout { width: auto; padding: 9px 16px; background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.2); color: #fff; }
-    .btn-logout:hover { background: rgba(255,255,255,0.18); color: #fff; }
     .btn:disabled { cursor: not-allowed; opacity: 0.55; box-shadow: none; transform: none; }
 
-    .toolbar { display: flex; gap: 10px; flex-wrap: wrap; }
-    .toolbar > * { flex: 1 1 150px; }
+    /* --- Entry editor: one row across the top -------------------------------- */
+    .editor-row { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; }
+    .field { display: flex; flex-direction: column; gap: 0; min-width: 0; }
+    .field label { margin: 0 0 7px; }
+    .field-guid { flex: 2 1 220px; }
+    .field-username { flex: 1.5 1 170px; }
+    .field-score { flex: 0 1 120px; }
+    .field-extra { flex: 2 1 170px; }
+    .editor-actions { display: flex; gap: 10px; margin-left: auto; flex-wrap: wrap; }
+
     .divider { border: 0; border-top: 1px solid var(--border); margin: 4px 0; }
-    .status { margin-top: 8px; min-height: 20px; color: var(--text-dim); font-size: 14px; }
+    .status { margin-top: 12px; min-height: 20px; color: var(--text-dim); font-size: 14px; }
 
     .section-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
     .section-head h2 { margin: 0; font-size: 1.3rem; color: var(--navy); }
     .section-head p { margin: 4px 0 0; color: var(--text-dim); font-size: 0.92rem; line-height: 1.5; }
     .inline-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-    .inline-controls select, .inline-controls .btn { width: auto; min-width: 160px; }
+    .inline-controls select { width: auto; min-width: 160px; }
 
     .tabs { display: flex; gap: 10px; margin-bottom: 18px; flex-wrap: wrap; }
-    .tab-button { width: auto; min-width: 170px; background: rgba(255, 255, 255, 0.7); color: var(--text); border: 1px solid var(--border); box-shadow: none; }
+    .tab-button { min-width: 170px; background: rgba(255, 255, 255, 0.7); color: var(--text); border: 1px solid var(--border); box-shadow: none; }
     .tab-button.active { background: var(--navy); color: #fff; border-color: var(--navy); box-shadow: 0 10px 18px rgba(16, 46, 89, 0.18); }
 
     .tab-panel { display: none; }
     .tab-panel.active { display: block; animation: fadeUp 180ms ease; }
     @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 
-    .table-wrap { overflow: auto; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); }
-    table { width: 100%; border-collapse: collapse; min-width: 840px; }
-    th, td { padding: 12px 14px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+    /* Tables fill the full width now. No forced min-width, so desktop never
+       side-scrolls; long values wrap instead. The wrapper keeps a safety scroll
+       for very narrow phones only. */
+    .table-wrap { overflow-x: auto; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 12px 14px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; word-break: break-word; }
     th { font-size: 0.8rem; color: var(--gold-dark); text-transform: uppercase; letter-spacing: 0.08em; background: rgba(187, 144, 83, 0.1); font-weight: 700; }
-    tbody tr { cursor: default; }
     #entriesBody tr { cursor: pointer; }
     tr:hover td { background: rgba(23, 63, 119, 0.04); }
     .small { color: var(--text-dim); font-size: 0.88rem; }
 
-    @media (max-width: 900px) {
+    /* Quiet log-out, lower down (out of the title area). */
+    .page-foot { display: flex; justify-content: flex-end; padding-top: 4px; }
+    .btn-logout { background: transparent; color: var(--text-dim); border-color: var(--border-strong); }
+    .btn-logout:hover { background: rgba(23, 63, 119, 0.06); color: var(--navy); }
+
+    @media (max-width: 720px) {
       .shell { padding: 18px; }
-      .grid { grid-template-columns: 1fr; }
-      .sidebar { position: static; }
-      .hero h1 { font-size: 1.8rem; }
+      .editor-actions { margin-left: 0; width: 100%; }
+      .editor-actions .btn { flex: 1 1 auto; }
+      .field-score { flex: 1 1 120px; }
     }
   </style>
 </head>
 <body>
   <div class="shell">
-    <div class="topbar">
-      <div class="brand">
-        <span class="dot"></span>
-        <div>
-          <div class="title">The Gold Standard</div>
-          <div class="sub">Leaderboard admin workspace</div>
-        </div>
-      </div>
-      <button id="logout" class="btn btn-logout" type="button">Log out</button>
-    </div>
+    <header class="page-head">
+      <div class="title-wrap"><h1>TGS Leaderboard</h1></div>
+      <div id="keyControl" class="key-control" aria-live="polite"></div>
+    </header>
 
-    <section class="hero">
-      <h1>TGS Control Panel</h1>
-      <p>Manage leaderboard entries and review first-launch player profiles from the same backend.</p>
-    </section>
-
-    <div class="grid">
-      <section class="card sidebar">
-        <div class="eyebrow">Leaderboard</div>
-        <div>
-          <label for="publicKey">Leaderboard Public Key</label>
-          <input id="publicKey" type="text" placeholder="ff61800f61ee...">
-        </div>
-        <div class="toolbar">
-          <button id="loadEntries" class="btn btn-primary" type="button">Load Entries</button>
-          <button id="loadKeys" class="btn" type="button">Load Keys</button>
-        </div>
-        <div>
-          <label for="knownKeys">Known Public Keys</label>
-          <select id="knownKeys">
-            <option value="">Select a key</option>
-          </select>
-        </div>
-        <hr class="divider">
-        <div class="eyebrow">Entry</div>
-        <div>
+    <!-- Entry editor: a single row across the top -->
+    <section class="card">
+      <div class="eyebrow">Add / edit entry</div>
+      <div class="editor-row">
+        <div class="field field-guid">
           <label for="userGuid">User GUID</label>
           <input id="userGuid" type="text" placeholder="player GUID">
         </div>
-        <div>
+        <div class="field field-username">
           <label for="username">Username</label>
           <input id="username" type="text" placeholder="Alice-USA-12.34">
         </div>
-        <div>
+        <div class="field field-score">
           <label for="score">Score</label>
           <input id="score" type="number" step="1" placeholder="1234">
         </div>
-        <div>
+        <div class="field field-extra">
           <label for="extra">Extra</label>
-          <textarea id="extra" placeholder="yes"></textarea>
+          <input id="extra" type="text" placeholder="yes">
         </div>
-        <div class="toolbar">
-          <button id="saveEntry" class="btn btn-primary" type="button">Save Entry</button>
-          <button id="newEntry" class="btn" type="button">New Form</button>
+        <div class="editor-actions">
+          <button id="saveEntry" class="btn btn-primary" type="button">Save</button>
+          <button id="newEntry" class="btn" type="button">New</button>
+          <button id="deleteEntry" class="btn btn-danger" type="button">Delete</button>
         </div>
-        <div class="toolbar">
-          <button id="deleteEntry" class="btn btn-danger" type="button">Delete Entry</button>
-        </div>
-        <div id="status" class="status"></div>
-      </section>
-
-      <div class="main-stack">
-        <section class="card">
-          <div class="section-head">
-            <div>
-              <h2>Workspace</h2>
-              <p>Switch between leaderboard management and profile review without losing your place.</p>
-            </div>
-          </div>
-          <div class="tabs">
-            <button id="tabEntries" class="btn tab-button active" type="button">Leaderboard Entries</button>
-            <button id="tabProfiles" class="btn tab-button" type="button">Player Profiles</button>
-          </div>
-
-          <div id="panelEntries" class="tab-panel active">
-            <div class="section-head">
-              <div>
-                <h2>Leaderboard Entries</h2>
-                <p>Entries for the selected public key. Click a row to edit it.</p>
-              </div>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Rank</th>
-                    <th>Username</th>
-                    <th>Score</th>
-                    <th>Extra</th>
-                    <th>User GUID</th>
-                    <th>Updated</th>
-                  </tr>
-                </thead>
-                <tbody id="entriesBody">
-                  <tr><td colspan="6" class="small">No entries loaded yet.</td></tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div id="panelProfiles" class="tab-panel">
-            <div class="section-head">
-              <div>
-                <h2>Player Profiles</h2>
-                <p>Review Get Started submissions and sort them by date, name, email, or country.</p>
-              </div>
-              <div class="inline-controls">
-                <select id="profileSort">
-                  <option value="createdAt-desc">Newest First</option>
-                  <option value="createdAt-asc">Oldest First</option>
-                  <option value="name-asc">Name A-Z</option>
-                  <option value="name-desc">Name Z-A</option>
-                  <option value="email-asc">Email A-Z</option>
-                  <option value="email-desc">Email Z-A</option>
-                  <option value="country-asc">Country A-Z</option>
-                  <option value="country-desc">Country Z-A</option>
-                </select>
-                <button id="loadProfiles" class="btn btn-primary" type="button">Load Profiles</button>
-              </div>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Email</th>
-                    <th>Country</th>
-                    <th>Consent</th>
-                    <th>User GUID</th>
-                    <th>Created</th>
-                    <th>Updated</th>
-                  </tr>
-                </thead>
-                <tbody id="profilesBody">
-                  <tr><td colspan="7" class="small">No profiles loaded yet.</td></tr>
-                </tbody>
-              </table>
-            </div>
-            <div id="profilesStatus" class="status"></div>
-          </div>
-        </section>
       </div>
-    </div>
+      <div id="status" class="status"></div>
+    </section>
+
+    <!-- Workspace -->
+    <section class="card">
+      <div class="tabs">
+        <button id="tabEntries" class="btn tab-button active" type="button">Leaderboard Entries</button>
+        <button id="tabProfiles" class="btn tab-button" type="button">Player Profiles</button>
+      </div>
+
+      <div id="panelEntries" class="tab-panel active">
+        <div class="section-head">
+          <div>
+            <h2>Leaderboard Entries</h2>
+            <p>Entries for the selected key. Click a row to load it into the editor above.</p>
+          </div>
+          <div class="inline-controls">
+            <button id="refreshEntries" class="btn" type="button">Refresh</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Rank</th>
+                <th>Username</th>
+                <th>Score</th>
+                <th>Extra</th>
+                <th>User GUID</th>
+                <th>Updated</th>
+              </tr>
+            </thead>
+            <tbody id="entriesBody">
+              <tr><td colspan="6" class="small">Loading entries…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="panelProfiles" class="tab-panel">
+        <div class="section-head">
+          <div>
+            <h2>Player Profiles</h2>
+            <p>Get Started submissions. Sort by date, name, email, or country.</p>
+          </div>
+          <div class="inline-controls">
+            <select id="profileSort">
+              <option value="createdAt-desc">Newest First</option>
+              <option value="createdAt-asc">Oldest First</option>
+              <option value="name-asc">Name A-Z</option>
+              <option value="name-desc">Name Z-A</option>
+              <option value="email-asc">Email A-Z</option>
+              <option value="email-desc">Email Z-A</option>
+              <option value="country-asc">Country A-Z</option>
+              <option value="country-desc">Country Z-A</option>
+            </select>
+            <button id="loadProfiles" class="btn" type="button">Refresh</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Country</th>
+                <th>Consent</th>
+                <th>User GUID</th>
+                <th>Created</th>
+                <th>Updated</th>
+              </tr>
+            </thead>
+            <tbody id="profilesBody">
+              <tr><td colspan="7" class="small">No profiles loaded yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div id="profilesStatus" class="status"></div>
+      </div>
+    </section>
+
+    <footer class="page-foot">
+      <button id="logout" class="btn btn-logout" type="button">Log out</button>
+    </footer>
   </div>
 
   <script>
-    const publicKeyInput = document.getElementById("publicKey");
-    const knownKeysSelect = document.getElementById("knownKeys");
+    const keyControl = document.getElementById("keyControl");
     const userGuidInput = document.getElementById("userGuid");
     const usernameInput = document.getElementById("username");
     const scoreInput = document.getElementById("score");
@@ -317,27 +292,28 @@
     const tabProfilesButton = document.getElementById("tabProfiles");
     const panelEntries = document.getElementById("panelEntries");
     const panelProfiles = document.getElementById("panelProfiles");
+    const saveEntryButton = document.getElementById("saveEntry");
+    const deleteEntryButton = document.getElementById("deleteEntry");
+
+    const MRU_KEY = "lbAdminPublicKey";
+    let allKeys = [];
+    let currentPublicKey = "";
     let loadedProfiles = [];
+    let profilesLoadedOnce = false;
 
-    publicKeyInput.value = localStorage.getItem("lbAdminPublicKey") || "";
-
-    publicKeyInput.addEventListener("change", () => localStorage.setItem("lbAdminPublicKey", publicKeyInput.value.trim()));
-    document.getElementById("loadKeys").addEventListener("click", loadPublicKeys);
-    document.getElementById("loadEntries").addEventListener("click", loadEntries);
+    // --- Wiring ---------------------------------------------------------------
+    document.getElementById("refreshEntries").addEventListener("click", loadEntries);
     document.getElementById("loadProfiles").addEventListener("click", loadProfiles);
-    document.getElementById("saveEntry").addEventListener("click", saveEntry);
-    document.getElementById("deleteEntry").addEventListener("click", deleteEntry);
+    saveEntryButton.addEventListener("click", saveEntry);
+    deleteEntryButton.addEventListener("click", deleteEntry);
     document.getElementById("newEntry").addEventListener("click", clearForm);
     document.getElementById("logout").addEventListener("click", logout);
     profileSortSelect.addEventListener("change", () => renderProfiles(sortProfiles(loadedProfiles)));
     tabEntriesButton.addEventListener("click", () => setActiveTab("entries"));
     tabProfilesButton.addEventListener("click", () => setActiveTab("profiles"));
-    knownKeysSelect.addEventListener("change", () => {
-      if (knownKeysSelect.value) {
-        publicKeyInput.value = knownKeysSelect.value;
-        localStorage.setItem("lbAdminPublicKey", publicKeyInput.value.trim());
-      }
-    });
+
+    // Auto-load on open: fetch keys, pick one, load its entries — no clicks.
+    init();
 
     // The page is only served to an authenticated session (or token), so the
     // browser's session cookie carries auth automatically.
@@ -365,56 +341,115 @@
       return text ? JSON.parse(text) : null;
     }
 
-    function logout() {
-      const form = document.createElement("form");
-      form.method = "POST";
-      form.action = "/admin/logout";
-      document.body.appendChild(form);
-      form.submit();
-    }
-
-    async function loadPublicKeys() {
-      setStatus("Loading public keys...");
+    async function init() {
       try {
-        const keys = await api("/admin/api/public-keys");
-        knownKeysSelect.innerHTML = '<option value="">Select a key</option>';
-        for (const key of keys) {
-          const option = document.createElement("option");
-          option.value = key;
-          option.textContent = key;
-          knownKeysSelect.appendChild(option);
-        }
-        setStatus(`Loaded ${keys.length} public key(s).`);
+        allKeys = await api("/admin/api/public-keys");
       } catch (error) {
         setStatus(error.message, true);
-      }
-    }
-
-    async function loadEntries() {
-      const publicKey = publicKeyInput.value.trim();
-      if (!publicKey) {
-        setStatus("Enter a public key first.", true);
         return;
       }
 
-      localStorage.setItem("lbAdminPublicKey", publicKey);
-      setStatus("Loading entries...");
+      // Decide which key to open: most-recently-used (remembered) if it still
+      // exists, otherwise the first one. Reported in the status line below.
+      const remembered = localStorage.getItem(MRU_KEY) || "";
+      let reason = "";
+      if (allKeys.length === 0) {
+        currentPublicKey = "";
+      } else if (allKeys.length === 1) {
+        currentPublicKey = allKeys[0];
+        reason = "only key";
+      } else if (remembered && allKeys.includes(remembered)) {
+        currentPublicKey = remembered;
+        reason = "most-recently-used";
+      } else {
+        currentPublicKey = allKeys[0];
+        reason = "first key";
+      }
 
+      renderKeyControl();
+      updateEditorEnabled();
+
+      if (!currentPublicKey) {
+        entriesBody.innerHTML = '<tr><td colspan="6" class="small">No leaderboard keys yet. Entries appear here once the game submits scores.</td></tr>';
+        setStatus("No leaderboard keys found.");
+        return;
+      }
+
+      localStorage.setItem(MRU_KEY, currentPublicKey);
+      await loadEntries(reason);
+    }
+
+    // Header control: a dropdown when there are several keys, a label when one.
+    function renderKeyControl() {
+      keyControl.innerHTML = "";
+      if (allKeys.length <= 1) {
+        if (!currentPublicKey) return;
+        const lab = document.createElement("span");
+        lab.className = "key-label";
+        lab.textContent = "Key";
+        const chip = document.createElement("span");
+        chip.className = "key-chip";
+        chip.textContent = currentPublicKey;
+        chip.title = currentPublicKey;
+        keyControl.append(lab, chip);
+        return;
+      }
+
+      const lab = document.createElement("label");
+      lab.className = "key-label";
+      lab.setAttribute("for", "keySelect");
+      lab.textContent = "Key";
+      const select = document.createElement("select");
+      select.id = "keySelect";
+      select.className = "key-select";
+      for (const key of allKeys) {
+        const option = document.createElement("option");
+        option.value = key;
+        option.textContent = key;
+        if (key === currentPublicKey) option.selected = true;
+        select.appendChild(option);
+      }
+      select.addEventListener("change", () => selectKey(select.value));
+      keyControl.append(lab, select);
+    }
+
+    // Switch key (from the header dropdown): remember it and reload entries.
+    async function selectKey(key) {
+      if (!key || key === currentPublicKey) return;
+      currentPublicKey = key;
+      localStorage.setItem(MRU_KEY, currentPublicKey);
+      updateEditorEnabled();
+      await loadEntries();
+    }
+
+    function updateEditorEnabled() {
+      const hasKey = Boolean(currentPublicKey);
+      saveEntryButton.disabled = !hasKey;
+      deleteEntryButton.disabled = !hasKey;
+    }
+
+    async function loadEntries(reason) {
+      if (!currentPublicKey) {
+        setStatus("No leaderboard key selected.", true);
+        return;
+      }
+      setStatus("Loading entries…");
       try {
-        const entries = await api(`/admin/api/entries?publicKey=${encodeURIComponent(publicKey)}`);
+        const entries = await api(`/admin/api/entries?publicKey=${encodeURIComponent(currentPublicKey)}`);
         renderEntries(entries);
-        setStatus(`Loaded ${entries.length} entr${entries.length === 1 ? "y" : "ies"}.`);
+        const suffix = reason ? ` (${reason})` : "";
+        setStatus(`Loaded ${entries.length} entr${entries.length === 1 ? "y" : "ies"}${suffix}.`);
       } catch (error) {
         setStatus(error.message, true);
       }
     }
 
     async function loadProfiles() {
-      setProfilesStatus("Loading player profiles...");
+      setProfilesStatus("Loading player profiles…");
       try {
         loadedProfiles = await api("/admin/api/player-profiles");
+        profilesLoadedOnce = true;
         renderProfiles(sortProfiles(loadedProfiles));
-        setActiveTab("profiles");
         setProfilesStatus(`Loaded ${loadedProfiles.length} profile${loadedProfiles.length === 1 ? "" : "s"}.`);
       } catch (error) {
         setProfilesStatus(error.message, true);
@@ -427,7 +462,7 @@
         return;
       }
 
-      setStatus("Saving entry...");
+      setStatus("Saving entry…");
       try {
         await api("/admin/api/entries", {
           method: "POST",
@@ -441,11 +476,10 @@
     }
 
     async function deleteEntry() {
-      const publicKey = publicKeyInput.value.trim();
       const userGuid = userGuidInput.value.trim();
 
-      if (!publicKey || !userGuid) {
-        setStatus("Public key and user GUID are required to delete.", true);
+      if (!currentPublicKey || !userGuid) {
+        setStatus("Select a key and a user GUID to delete.", true);
         return;
       }
 
@@ -453,9 +487,9 @@
         return;
       }
 
-      setStatus("Deleting entry...");
+      setStatus("Deleting entry…");
       try {
-        await api(`/admin/api/entries/${encodeURIComponent(publicKey)}/${encodeURIComponent(userGuid)}`, {
+        await api(`/admin/api/entries/${encodeURIComponent(currentPublicKey)}/${encodeURIComponent(userGuid)}`, {
           method: "DELETE"
         });
         clearForm();
@@ -468,7 +502,7 @@
 
     function renderEntries(entries) {
       if (!entries.length) {
-        entriesBody.innerHTML = '<tr><td colspan="6" class="small">No entries found for this public key.</td></tr>';
+        entriesBody.innerHTML = '<tr><td colspan="6" class="small">No entries found for this key.</td></tr>';
         return;
       }
 
@@ -539,19 +573,18 @@
     }
 
     function collectForm() {
-      const publicKey = publicKeyInput.value.trim();
       const userGuid = userGuidInput.value.trim();
       const username = usernameInput.value.trim();
       const score = scoreInput.value.trim();
       const extra = extraInput.value;
 
-      if (!publicKey || !userGuid || !username || !score) {
-        setStatus("Public key, user GUID, username, and score are required.", true);
+      if (!currentPublicKey || !userGuid || !username || !score) {
+        setStatus("A key, user GUID, username, and score are required.", true);
         return null;
       }
 
       return {
-        publicKey,
+        publicKey: currentPublicKey,
         userGuid,
         username,
         score: Number(score),
@@ -560,13 +593,11 @@
     }
 
     function fillForm(entry) {
-      publicKeyInput.value = entry.publicKey;
       userGuidInput.value = entry.userGuid;
       usernameInput.value = entry.username;
       scoreInput.value = entry.score;
       extraInput.value = entry.extra || "";
-      localStorage.setItem("lbAdminPublicKey", publicKeyInput.value.trim());
-      setStatus(`Loaded ${entry.userGuid} into the form.`);
+      setStatus(`Loaded ${entry.userGuid} into the editor.`);
     }
 
     function clearForm() {
@@ -574,7 +605,7 @@
       usernameInput.value = "";
       scoreInput.value = "";
       extraInput.value = "";
-      setStatus("Form cleared.");
+      setStatus("Editor cleared.");
     }
 
     function setStatus(message, isError = false) {
@@ -593,6 +624,10 @@
       panelProfiles.classList.toggle("active", !showingEntries);
       tabEntriesButton.classList.toggle("active", showingEntries);
       tabProfilesButton.classList.toggle("active", !showingEntries);
+      // Lazy auto-load profiles the first time that tab is opened (no click).
+      if (!showingEntries && !profilesLoadedOnce) {
+        loadProfiles();
+      }
     }
 
     function formatTimestamp(value) {
@@ -611,6 +646,14 @@
         .replaceAll(">", "&gt;")
         .replaceAll("\"", "&quot;")
         .replaceAll("'", "&#039;");
+    }
+
+    function logout() {
+      const form = document.createElement("form");
+      form.method = "POST";
+      form.action = "/admin/logout";
+      document.body.appendChild(form);
+      form.submit();
     }
   </script>
 </body>
