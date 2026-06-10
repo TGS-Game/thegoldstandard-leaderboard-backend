@@ -151,6 +151,9 @@
     .btn-logout { background: transparent; color: var(--text-dim); border-color: var(--border-strong); }
     .btn-logout:hover { background: rgba(23, 63, 119, 0.06); color: var(--navy); }
 
+    /* Hide the admin logout button when this page is embedded in an iframe (hub) */
+    html.in-iframe #logout { display: none !important; }
+
     @media (max-width: 720px) {
       .shell { padding: 18px; }
       .editor-actions { margin-left: 0; width: 100%; }
@@ -158,6 +161,10 @@
       .field-score { flex: 1 1 120px; }
     }
   </style>
+  <script>
+    // Detect iframe embedding before render to avoid a flash of the logout button
+    if (window.self !== window.top) { document.documentElement.classList.add("in-iframe"); }
+  </script>
 </head>
 <body>
   <div class="shell">
