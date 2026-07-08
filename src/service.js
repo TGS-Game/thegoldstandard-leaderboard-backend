@@ -126,6 +126,54 @@ class LeaderboardService {
       createdAt: existing ? existing.createdAt : timestamp,
       updatedAt: timestamp
     });
+
+    // Mirror the registration to the external onboarding bridge. This is
+    // intentionally NOT awaited: registration has already succeeded, and the
+    // onboarding call must never delay or fail the player's response.
+    this.notifyOnboarding({
+      name,
+      email,
+      country,
+      consent: consentAccepted
+    });
+  }
+
+  // Fire-and-forget POST to the onboarding bridge. Any slowness, error, or
+  // unreachable endpoint is logged and swallowed — it can never throw into,
+  // or block, uploadPlayerProfile.
+  notifyOnboarding({ name, email, country, consent }) {
+    const url = this.config.onboardUrl;
+    const secret = this.config.onboardSharedSecret;
+
+    if (!url || !secret) {
+      console.warn(
+        "Onboarding notify skipped: ONBOARD_URL or ONBOARD_SHARED_SECRET is not configured."
+      );
+      return;
+    }
+
+    Promise.resolve()
+      .then(() =>
+        fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-shared-secret": secret
+          },
+          body: JSON.stringify({ name, email, country, consent }),
+          signal: AbortSignal.timeout(this.config.onboardTimeoutMs)
+        })
+      )
+      .then((response) => {
+        if (!response.ok) {
+          console.error(
+            `Onboarding notify failed: HTTP ${response.status} from onboarding bridge.`
+          );
+        }
+      })
+      .catch((error) => {
+        console.error(`Onboarding notify error: ${error.message}`);
+      });
   }
 
   async checkHealth() {

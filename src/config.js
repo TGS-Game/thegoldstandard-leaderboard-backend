@@ -41,5 +41,13 @@ module.exports = {
   // Origin allowed to embed the admin panel in an iframe (CSP frame-ancestors).
   hubOrigin: process.env.HUB_ORIGIN || "",
   maxUsernameLength: parsePositiveInt(process.env.MAX_USERNAME_LENGTH, 127),
-  maxExtraLength: parsePositiveInt(process.env.MAX_EXTRA_LENGTH, 100)
+  maxExtraLength: parsePositiveInt(process.env.MAX_EXTRA_LENGTH, 100),
+  // External onboarding bridge: player registrations are mirrored here.
+  // Fire-and-forget — never blocks or fails game registration.
+  onboardUrl:
+    process.env.ONBOARD_URL ||
+    "https://onboarding-bridge-production.up.railway.app/api/switchmax",
+  onboardSharedSecret: process.env.ONBOARD_SHARED_SECRET || "",
+  // How long to wait on the onboarding call before giving up (ms).
+  onboardTimeoutMs: parsePositiveInt(process.env.ONBOARD_TIMEOUT_MS, 5000)
 };
