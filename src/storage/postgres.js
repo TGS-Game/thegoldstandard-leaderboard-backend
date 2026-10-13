@@ -55,6 +55,48 @@ class PostgresStorage {
     await this.pool.query(`
       CREATE INDEX IF NOT EXISTS idx_player_profiles_created_at ON player_profiles(created_at DESC);
     `);
+
+    await this.initializeEntryHistory();
+  }
+
+  // Audit trail of entry changes. Only ever creates a NEW table and its own
+  // indexes: no ALTER, no foreign key, nothing that locks or rewrites entries.
+  // A failure here is logged and swallowed so it can never stop the service
+  // from booting; history writes then fail (and are swallowed) until it is fixed.
+  async initializeEntryHistory() {
+    try {
+      await this.pool.query(`
+        CREATE TABLE IF NOT EXISTS entry_history (
+          id BIGSERIAL PRIMARY KEY,
+          at BIGINT NOT NULL,
+          action TEXT NOT NULL,
+          source TEXT NOT NULL,
+          public_key TEXT NOT NULL,
+          user_guid TEXT NOT NULL,
+          entry_id TEXT,
+          old_username TEXT,
+          old_score INTEGER,
+          old_extra TEXT,
+          old_created_at BIGINT,
+          old_updated_at BIGINT,
+          new_username TEXT,
+          new_score INTEGER,
+          new_extra TEXT,
+          ip TEXT NOT NULL DEFAULT '',
+          user_agent TEXT NOT NULL DEFAULT ''
+        );
+      `);
+
+      await this.pool.query(`
+        CREATE INDEX IF NOT EXISTS idx_entry_history_public_key_user_guid ON entry_history(public_key, user_guid);
+      `);
+
+      await this.pool.query(`
+        CREATE INDEX IF NOT EXISTS idx_entry_history_at ON entry_history(at);
+      `);
+    } catch (error) {
+      console.error(`Entry history table setup failed: ${error.message}`);
+    }
   }
 
   async listEntries(publicKey) {
@@ -152,6 +194,92 @@ class PostgresStorage {
     return result.rowCount > 0;
   }
 
+  async insertEntryHistory(record) {
+    await this.pool.query(`
+      INSERT INTO entry_history (
+        at,
+        action,
+        source,
+        public_key,
+        user_guid,
+        entry_id,
+        old_username,
+        old_score,
+        old_extra,
+        old_created_at,
+        old_updated_at,
+        new_username,
+        new_score,
+        new_extra,
+        ip,
+        user_agent
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+    `, [
+      record.at,
+      record.action,
+      record.source,
+      record.publicKey,
+      record.userGuid,
+      record.entryId,
+      record.oldUsername,
+      record.oldScore,
+      record.oldExtra,
+      record.oldCreatedAt,
+      record.oldUpdatedAt,
+      record.newUsername,
+      record.newScore,
+      record.newExtra,
+      record.ip,
+      record.userAgent
+    ]);
+  }
+
+  // Newest first. publicKey and userGuid are optional filters ('' = any).
+  async listEntryHistory({ publicKey, userGuid, limit }) {
+    const conditions = [];
+    const values = [];
+
+    if (publicKey) {
+      values.push(publicKey);
+      conditions.push(`public_key = $${values.length}`);
+    }
+
+    if (userGuid) {
+      values.push(userGuid);
+      conditions.push(`user_guid = $${values.length}`);
+    }
+
+    values.push(limit);
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    const result = await this.pool.query(`
+      SELECT
+        id,
+        at,
+        action,
+        source,
+        public_key,
+        user_guid,
+        entry_id,
+        old_username,
+        old_score,
+        old_extra,
+        old_created_at,
+        old_updated_at,
+        new_username,
+        new_score,
+        new_extra,
+        ip,
+        user_agent
+      FROM entry_history
+      ${where}
+      ORDER BY at DESC, id DESC
+      LIMIT $${values.length}
+    `, values);
+
+    return result.rows.map(mapEntryHistory);
+  }
+
   async getPlayerProfileByEmail(email) {
     const result = await this.pool.query(`
       SELECT
@@ -244,6 +372,33 @@ function mapEntry(row) {
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at)
   };
+}
+
+function mapEntryHistory(row) {
+  return {
+    id: Number(row.id),
+    at: Number(row.at),
+    action: row.action,
+    source: row.source,
+    publicKey: row.public_key,
+    userGuid: row.user_guid,
+    entryId: row.entry_id,
+    oldUsername: row.old_username,
+    oldScore: nullableNumber(row.old_score),
+    oldExtra: row.old_extra,
+    oldCreatedAt: nullableNumber(row.old_created_at),
+    oldUpdatedAt: nullableNumber(row.old_updated_at),
+    newUsername: row.new_username,
+    newScore: nullableNumber(row.new_score),
+    newExtra: row.new_extra,
+    ip: row.ip,
+    userAgent: row.user_agent
+  };
+}
+
+// BIGINT columns arrive as strings; keep NULL as null instead of 0.
+function nullableNumber(value) {
+  return value === null || value === undefined ? null : Number(value);
 }
 
 function mapPlayerProfile(row) {

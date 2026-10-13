@@ -42,6 +42,42 @@ class SqliteStorage {
       CREATE INDEX IF NOT EXISTS idx_player_profiles_email ON player_profiles(email);
       CREATE INDEX IF NOT EXISTS idx_player_profiles_created_at ON player_profiles(created_at DESC);
     `);
+
+    this.initializeEntryHistory();
+  }
+
+  // Audit trail of entry changes. Only creates a new table and its indexes. A
+  // failure here is logged and swallowed so it can never stop the service from
+  // booting; history writes then fail (and are swallowed) until it is fixed.
+  initializeEntryHistory() {
+    try {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS entry_history (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          at INTEGER NOT NULL,
+          action TEXT NOT NULL,
+          source TEXT NOT NULL,
+          public_key TEXT NOT NULL,
+          user_guid TEXT NOT NULL,
+          entry_id TEXT,
+          old_username TEXT,
+          old_score INTEGER,
+          old_extra TEXT,
+          old_created_at INTEGER,
+          old_updated_at INTEGER,
+          new_username TEXT,
+          new_score INTEGER,
+          new_extra TEXT,
+          ip TEXT NOT NULL DEFAULT '',
+          user_agent TEXT NOT NULL DEFAULT ''
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_entry_history_public_key_user_guid ON entry_history(public_key, user_guid);
+        CREATE INDEX IF NOT EXISTS idx_entry_history_at ON entry_history(at);
+      `);
+    } catch (error) {
+      console.error(`Entry history table setup failed: ${error.message}`);
+    }
   }
 
   async listEntries(publicKey) {
@@ -148,6 +184,109 @@ class SqliteStorage {
     return result.changes > 0;
   }
 
+  async insertEntryHistory(record) {
+    this.db.prepare(`
+      INSERT INTO entry_history (
+        at,
+        action,
+        source,
+        public_key,
+        user_guid,
+        entry_id,
+        old_username,
+        old_score,
+        old_extra,
+        old_created_at,
+        old_updated_at,
+        new_username,
+        new_score,
+        new_extra,
+        ip,
+        user_agent
+      ) VALUES (
+        @at,
+        @action,
+        @source,
+        @publicKey,
+        @userGuid,
+        @entryId,
+        @oldUsername,
+        @oldScore,
+        @oldExtra,
+        @oldCreatedAt,
+        @oldUpdatedAt,
+        @newUsername,
+        @newScore,
+        @newExtra,
+        @ip,
+        @userAgent
+      )
+    `).run({
+      at: record.at,
+      action: record.action,
+      source: record.source,
+      publicKey: record.publicKey,
+      userGuid: record.userGuid,
+      entryId: record.entryId,
+      oldUsername: record.oldUsername,
+      oldScore: record.oldScore,
+      oldExtra: record.oldExtra,
+      oldCreatedAt: record.oldCreatedAt,
+      oldUpdatedAt: record.oldUpdatedAt,
+      newUsername: record.newUsername,
+      newScore: record.newScore,
+      newExtra: record.newExtra,
+      ip: record.ip,
+      userAgent: record.userAgent
+    });
+  }
+
+  // Newest first. publicKey and userGuid are optional filters ('' = any).
+  async listEntryHistory({ publicKey, userGuid, limit }) {
+    const conditions = [];
+    const values = [];
+
+    if (publicKey) {
+      conditions.push("public_key = ?");
+      values.push(publicKey);
+    }
+
+    if (userGuid) {
+      conditions.push("user_guid = ?");
+      values.push(userGuid);
+    }
+
+    values.push(limit);
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    const rows = this.db.prepare(`
+      SELECT
+        id,
+        at,
+        action,
+        source,
+        public_key,
+        user_guid,
+        entry_id,
+        old_username,
+        old_score,
+        old_extra,
+        old_created_at,
+        old_updated_at,
+        new_username,
+        new_score,
+        new_extra,
+        ip,
+        user_agent
+      FROM entry_history
+      ${where}
+      ORDER BY at DESC, id DESC
+      LIMIT ?
+    `).all(...values);
+
+    return rows.map(mapEntryHistory);
+  }
+
   async getPlayerProfileByEmail(email) {
     const row = this.db.prepare(`
       SELECT
@@ -249,6 +388,33 @@ function mapEntry(row) {
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at)
   };
+}
+
+function mapEntryHistory(row) {
+  return {
+    id: Number(row.id),
+    at: Number(row.at),
+    action: row.action,
+    source: row.source,
+    publicKey: row.public_key,
+    userGuid: row.user_guid,
+    entryId: row.entry_id,
+    oldUsername: row.old_username,
+    oldScore: nullableNumber(row.old_score),
+    oldExtra: row.old_extra,
+    oldCreatedAt: nullableNumber(row.old_created_at),
+    oldUpdatedAt: nullableNumber(row.old_updated_at),
+    newUsername: row.new_username,
+    newScore: nullableNumber(row.new_score),
+    newExtra: row.new_extra,
+    ip: row.ip,
+    userAgent: row.user_agent
+  };
+}
+
+// Keep NULL as null instead of 0.
+function nullableNumber(value) {
+  return value === null || value === undefined ? null : Number(value);
 }
 
 function mapPlayerProfile(row) {

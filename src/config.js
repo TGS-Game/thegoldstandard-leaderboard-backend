@@ -40,6 +40,10 @@ module.exports = {
   ssoAudience: process.env.LEADERBOARD_SSO_AUDIENCE || "leaderboard",
   // Origin allowed to embed the admin panel in an iframe (CSP frame-ancestors).
   hubOrigin: process.env.HUB_ORIGIN || "",
+  // Optional key for masking other players' GUIDs in GET /get. When blank the
+  // service falls back to a key derived from SESSION_SECRET, then to a random
+  // per-process value (see resolveGuidMaskKey in service.js).
+  guidMaskSecret: process.env.GUID_MASK_SECRET || "",
   maxUsernameLength: parsePositiveInt(process.env.MAX_USERNAME_LENGTH, 127),
   maxExtraLength: parsePositiveInt(process.env.MAX_EXTRA_LENGTH, 100),
   // External onboarding bridge: player registrations are mirrored here.

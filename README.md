@@ -8,8 +8,8 @@ It exposes the routes your current Unity code expects:
 - `GET /authorize`
 - `GET /get`
 - `POST /entry/upload`
-- `POST /entry/update-username`
-- `POST /entry/delete`
+- `POST /entry/update-username` (admin-only, see below)
+- `POST /entry/delete` (admin-only, see below)
 - `GET /entry/get`
 - `GET /entry/count`
 
@@ -28,6 +28,8 @@ Your Unity gameplay/UI scripts do not need leaderboard logic changes. The only U
 - Default local storage: SQLite file
 - Production-ready option: Postgres via `DATABASE_URL`
 - Additional player onboarding storage: `player_profiles` table in the same database
+- Audit trail: `entry_history` table in the same database (created automatically
+  on start; one row per entry change, see "Entry History")
 
 If `DATABASE_URL` is set, the service uses Postgres. Otherwise it uses SQLite.
 
@@ -58,6 +60,9 @@ http://localhost:8787
 - `LEADERBOARD_SSO_SECRET`: Shared secret for hub single sign-on (HS256 JWT).
 - `LEADERBOARD_SSO_AUDIENCE`: Expected JWT `aud`. Default `leaderboard`.
 - `HUB_ORIGIN`: Origin allowed to embed `/admin` in an iframe (CSP `frame-ancestors`).
+- `GUID_MASK_SECRET`: Optional. Key used to mask other players' GUIDs in `GET /get`.
+  If blank, a key derived from `SESSION_SECRET` is used; if that is blank too, a
+  random per-process key (masks then change on every restart).
 - `MAX_USERNAME_LENGTH`: Default `127`.
 - `MAX_EXTRA_LENGTH`: Default `100`.
 
@@ -136,6 +141,7 @@ If `ADMIN_TOKEN` is set, the backend exposes:
 - `POST /admin/api/entries`
 - `PUT /admin/api/entries/:publicKey/:userGuid`
 - `DELETE /admin/api/entries/:publicKey/:userGuid`
+- `GET /admin/api/entry-history?publicKey=...&userGuid=...&limit=...`
 
 Authenticate with either:
 
@@ -167,11 +173,29 @@ The built-in admin page prompts for the token and lets you load public keys, ins
 ## API Notes
 
 - `GET /authorize` returns a plain text GUID.
-- `GET /get` returns a JSON array of entries.
-- `GET /entry/get` returns a JSON object for one entry.
+- `GET /get` returns a JSON array of entries. The real `UserGuid` is returned only
+  on the row whose GUID equals the caller's `userGuid` query parameter; every
+  other row carries a stable opaque 32-character token in `UserGuid` instead.
+- `GET /entry/get` returns a JSON object for one entry (the caller's own, looked
+  up by the `userGuid` they supply).
+- `POST /entry/update-username` and `POST /entry/delete` are admin-only: they
+  need the admin token (`Authorization: Bearer <ADMIN_TOKEN>` or
+  `X-Admin-Token`; the session cookie is deliberately not accepted here).
+  Anything else gets `403 Forbidden.` and nothing is changed. If `ADMIN_TOKEN`
+  is not set they deny everyone.
 - `GET /entry/count` returns a plain text integer.
 - Write routes return HTTP `200` on success. The body is not significant to the Unity package.
 - `POST /player-profile` accepts `name`, `email`, `country`, `consentAccepted`, and optional `userGuid`.
+
+## Entry History
+
+Every entry change (game upload insert/overwrite, rename, delete, admin
+create/edit/delete) appends a row to `entry_history` holding the row as it was
+before and after, plus the caller's IP string and user agent, so unwanted
+changes can be reviewed and put back by hand. Read it with
+`GET /admin/api/entry-history` (admin auth; newest first; optional `publicKey`
+and `userGuid` filters; `limit` default `100`, max `500`). History is
+best-effort: a failed history write is logged and never fails the request.
 
 ## Public Key Behavior
 

@@ -1,10 +1,18 @@
 const crypto = require("crypto");
 const { nowUnixSeconds, resolveMinTimestamp } = require("./time");
 
+// Stored request metadata is clamped so a hostile header cannot bloat history.
+const MAX_HISTORY_IP_LENGTH = 200;
+const MAX_HISTORY_USER_AGENT_LENGTH = 300;
+const DEFAULT_HISTORY_LIMIT = 100;
+const MAX_HISTORY_LIMIT = 500;
+
 class LeaderboardService {
   constructor(storage, config) {
     this.storage = storage;
     this.config = config;
+    // Key for the opaque tokens that replace other players' GUIDs in GET /get.
+    this.guidMaskKey = resolveGuidMaskKey(config);
   }
 
   async authorize() {
@@ -24,10 +32,31 @@ class LeaderboardService {
       viewerGuid: query.userGuid
     });
 
-    return filtered.map(toClientEntry);
+    // The GUID is the only credential for writing an entry, so the real value
+    // goes out only on the caller's own row. Every other row carries a stable
+    // opaque token in the same field (same shape, still a non-empty string).
+    const viewerGuid = normalizeOptionalString(query.userGuid);
+    return filtered.map((entry) =>
+      toClientEntry(
+        entry,
+        entry.userGuid === viewerGuid
+          ? entry.userGuid
+          : this.maskUserGuid(entry.publicKey, entry.userGuid)
+      )
+    );
   }
 
-  async uploadEntry(body) {
+  // HMAC-SHA256(maskKey, publicKey + ":" + userGuid), hex, first 32 chars.
+  // Deterministic for a given key, so repeated /get calls return the same token.
+  maskUserGuid(publicKey, userGuid) {
+    return crypto
+      .createHmac("sha256", this.guidMaskKey)
+      .update(`${publicKey}:${userGuid}`)
+      .digest("hex")
+      .slice(0, 32);
+  }
+
+  async uploadEntry(body, meta) {
     const publicKey = this.requirePublicKey(body.publicKey);
     const userGuid = this.requireUserGuid(body.userGuid);
     const username = this.normalizeUsername(body.username);
@@ -36,9 +65,10 @@ class LeaderboardService {
 
     const timestamp = nowUnixSeconds();
     const existing = await this.storage.getEntry(publicKey, userGuid);
+    const id = existing ? existing.id : crypto.randomUUID();
 
     await this.storage.upsertEntry({
-      id: existing ? existing.id : crypto.randomUUID(),
+      id,
       publicKey,
       userGuid,
       username,
@@ -47,12 +77,25 @@ class LeaderboardService {
       createdAt: existing ? existing.createdAt : timestamp,
       updatedAt: timestamp
     });
+
+    // Reuses the row already loaded above: no extra read for history.
+    this.recordEntryHistory({
+      action: existing ? "upload_overwrite" : "upload_insert",
+      source: "public",
+      publicKey,
+      userGuid,
+      before: existing,
+      after: { id, username, score, extra },
+      meta
+    });
   }
 
-  async updateUsername(body) {
+  // Admin-only since stage 1 (the route checks auth before calling this).
+  async updateUsername(body, meta) {
     const publicKey = this.requirePublicKey(body.publicKey);
     const userGuid = this.requireUserGuid(body.userGuid);
     const username = this.normalizeUsername(body.username);
+    const before = await this.readEntryForHistory(publicKey, userGuid);
 
     const updated = await this.storage.updateUsername(
       publicKey,
@@ -64,16 +107,42 @@ class LeaderboardService {
     if (!updated) {
       throw createHttpError(404, "Entry not found.");
     }
+
+    this.recordEntryHistory({
+      action: "rename",
+      source: historySource(meta),
+      publicKey,
+      userGuid,
+      before,
+      after: {
+        username,
+        score: before ? before.score : null,
+        extra: before ? before.extra : null
+      },
+      meta
+    });
   }
 
-  async deleteEntry(body) {
+  // Admin-only since stage 1 (the route checks auth before calling this).
+  async deleteEntry(body, meta) {
     const publicKey = this.requirePublicKey(body.publicKey);
     const userGuid = this.requireUserGuid(body.userGuid);
+    const before = await this.readEntryForHistory(publicKey, userGuid);
 
     const deleted = await this.storage.deleteEntry(publicKey, userGuid);
     if (!deleted) {
       throw createHttpError(404, "Entry not found.");
     }
+
+    this.recordEntryHistory({
+      action: "delete",
+      source: historySource(meta),
+      publicKey,
+      userGuid,
+      before,
+      after: null,
+      meta
+    });
   }
 
   async getPersonalEntry(query) {
@@ -98,7 +167,8 @@ class LeaderboardService {
       };
     }
 
-    return toClientEntry(entry);
+    // Only ever the caller's own row: it is looked up by the GUID they supplied.
+    return toClientEntry(entry, entry.userGuid);
   }
 
   async getEntryCount(query) {
@@ -211,7 +281,21 @@ class LeaderboardService {
     }));
   }
 
-  async adminUpsertEntry(body) {
+  // Read-only audit trail, newest first. Both filters are optional.
+  async getAdminEntryHistory(query) {
+    const parsedLimit = Number.parseInt(query.limit, 10);
+    const limit = Number.isFinite(parsedLimit) && parsedLimit > 0
+      ? Math.min(parsedLimit, MAX_HISTORY_LIMIT)
+      : DEFAULT_HISTORY_LIMIT;
+
+    return this.storage.listEntryHistory({
+      publicKey: normalizeOptionalString(query.publicKey),
+      userGuid: normalizeOptionalString(query.userGuid),
+      limit
+    });
+  }
+
+  async adminUpsertEntry(body, meta) {
     const publicKey = this.requirePublicKey(body.publicKey);
     const userGuid = this.requireUserGuid(body.userGuid);
     const username = this.normalizeUsername(body.username);
@@ -219,9 +303,10 @@ class LeaderboardService {
     const extra = this.normalizeExtra(body.extra);
     const timestamp = nowUnixSeconds();
     const existing = await this.storage.getEntry(publicKey, userGuid);
+    const id = existing ? existing.id : crypto.randomUUID();
 
     await this.storage.upsertEntry({
-      id: existing ? existing.id : crypto.randomUUID(),
+      id,
       publicKey,
       userGuid,
       username,
@@ -230,15 +315,82 @@ class LeaderboardService {
       createdAt: existing ? existing.createdAt : timestamp,
       updatedAt: timestamp
     });
+
+    this.recordEntryHistory({
+      action: existing ? "admin_upsert_overwrite" : "admin_upsert_insert",
+      source: "admin",
+      publicKey,
+      userGuid,
+      before: existing,
+      after: { id, username, score, extra },
+      meta
+    });
   }
 
-  async adminDeleteEntry(params) {
+  async adminDeleteEntry(params, meta) {
     const publicKey = this.requirePublicKey(params.publicKey);
     const userGuid = this.requireUserGuid(params.userGuid);
+    const before = await this.readEntryForHistory(publicKey, userGuid);
     const deleted = await this.storage.deleteEntry(publicKey, userGuid);
     if (!deleted) {
       throw createHttpError(404, "Entry not found.");
     }
+
+    this.recordEntryHistory({
+      action: "admin_delete",
+      source: "admin",
+      publicKey,
+      userGuid,
+      before,
+      after: null,
+      meta
+    });
+  }
+
+  // Loads the row as it is BEFORE a rename/delete so history can keep it. A
+  // failed read only costs the "old" columns; it never fails the request.
+  async readEntryForHistory(publicKey, userGuid) {
+    try {
+      return await this.storage.getEntry(publicKey, userGuid);
+    } catch (error) {
+      console.error(
+        `Entry history pre-read failed (key ${shortId(publicKey)}): ${error.message}`
+      );
+      return null;
+    }
+  }
+
+  // Appends one audit row for an entry mutation that has already succeeded.
+  // Intentionally NOT awaited, and every failure is logged and swallowed: a
+  // slow or broken history write can never delay or fail the game's request.
+  recordEntryHistory({ action, source, publicKey, userGuid, before, after, meta }) {
+    const requestMeta = meta || {};
+    const record = {
+      at: nowUnixSeconds(),
+      action,
+      source,
+      publicKey,
+      userGuid,
+      entryId: before ? before.id : (after && after.id) || null,
+      oldUsername: before ? before.username : null,
+      oldScore: before ? before.score : null,
+      oldExtra: before ? before.extra : null,
+      oldCreatedAt: before ? before.createdAt : null,
+      oldUpdatedAt: before ? before.updatedAt : null,
+      newUsername: after ? after.username : null,
+      newScore: after ? after.score : null,
+      newExtra: after ? after.extra : null,
+      ip: clampText(requestMeta.ip, MAX_HISTORY_IP_LENGTH),
+      userAgent: clampText(requestMeta.userAgent, MAX_HISTORY_USER_AGENT_LENGTH)
+    };
+
+    Promise.resolve()
+      .then(() => this.storage.insertEntryHistory(record))
+      .catch((error) => {
+        console.error(
+          `Entry history write failed (${action}, key ${shortId(publicKey)}): ${error.message}`
+        );
+      });
   }
 
   requirePublicKey(publicKey) {
@@ -420,15 +572,49 @@ function compareEntries(left, right, isAscending) {
   return left.id.localeCompare(right.id);
 }
 
-function toClientEntry(entry) {
+// clientUserGuid is the real GUID for the caller's own row, a mask otherwise.
+function toClientEntry(entry, clientUserGuid) {
   return {
     Username: entry.username,
     Score: entry.score,
     Date: entry.updatedAt,
     Extra: entry.extra,
     Rank: entry.rank,
-    UserGuid: entry.userGuid
+    UserGuid: clientUserGuid
   };
+}
+
+// Mask key order: GUID_MASK_SECRET, else a key derived from SESSION_SECRET
+// (derived, so the cookie-signing secret is never used directly for a second
+// purpose), else a random per-process value. The random fallback keeps tokens
+// stable only until the next restart.
+function resolveGuidMaskKey(config) {
+  if (config.guidMaskSecret) {
+    return config.guidMaskSecret;
+  }
+
+  if (config.sessionSecret) {
+    return crypto
+      .createHmac("sha256", config.sessionSecret)
+      .update("guid-mask-key-v1")
+      .digest();
+  }
+
+  return crypto.randomBytes(32);
+}
+
+// The /entry/* admin-only routes pass source "admin"; default is "public".
+function historySource(meta) {
+  return meta && meta.source === "admin" ? "admin" : "public";
+}
+
+function clampText(value, maxLength) {
+  return typeof value === "string" ? value.slice(0, maxLength) : "";
+}
+
+// Log-safe prefix of a key or GUID: never more than the first 8 characters.
+function shortId(value) {
+  return typeof value === "string" ? value.slice(0, 8) : "";
 }
 
 function normalizeOptionalString(value) {
