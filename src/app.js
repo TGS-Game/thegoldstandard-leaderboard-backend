@@ -38,8 +38,12 @@ function getRequestMeta(req) {
 function createApp(service, config) {
   const app = express();
   const formParser = multer();
+  const observer = service.observer;
 
   app.disable("x-powered-by");
+  // Observe mode: only attaches a listener that runs after the response has
+  // been sent. It cannot reject, delay or change any request.
+  app.use(observer.middleware());
   app.use(cors({ origin: config.corsOrigin }));
   app.use(express.json());
 
@@ -61,6 +65,7 @@ function createApp(service, config) {
   app.get("/authorize", async (_req, res, next) => {
     try {
       const guid = await service.authorize();
+      observer.guidIssued(res, guid);
       res.status(200).type("text/plain").send(guid);
     } catch (error) {
       next(error);
@@ -78,7 +83,8 @@ function createApp(service, config) {
 
   app.post("/entry/upload", formParser.none(), async (req, res, next) => {
     try {
-      await service.uploadEntry(req.body, getRequestMeta(req));
+      const stored = await service.uploadEntry(req.body, getRequestMeta(req));
+      observer.uploadStored(res, stored);
       res.status(200).type("text/plain").send("OK");
     } catch (error) {
       next(error);
@@ -350,6 +356,26 @@ function createApp(service, config) {
       try {
         const history = await service.getAdminEntryHistory(req.query);
         res.status(200).json(history);
+      } catch (error) {
+        next(error);
+      }
+    });
+
+    // Read-only observe-mode rows (newest first).
+    app.get("/admin/api/observations", async (req, res, next) => {
+      try {
+        const observations = await service.getAdminObservations(req.query);
+        res.status(200).json(observations);
+      } catch (error) {
+        next(error);
+      }
+    });
+
+    // Read-only observe-mode report for a period.
+    app.get("/admin/api/observation-summary", async (req, res, next) => {
+      try {
+        const summary = await service.getAdminObservationSummary(req.query);
+        res.status(200).json(summary);
       } catch (error) {
         next(error);
       }

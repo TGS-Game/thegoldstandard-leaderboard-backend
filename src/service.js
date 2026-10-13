@@ -1,5 +1,6 @@
 const crypto = require("crypto");
 const { nowUnixSeconds, resolveMinTimestamp } = require("./time");
+const { SecurityObserver } = require("./observe");
 
 // Stored request metadata is clamped so a hostile header cannot bloat history.
 const MAX_HISTORY_IP_LENGTH = 200;
@@ -13,6 +14,13 @@ class LeaderboardService {
     this.config = config;
     // Key for the opaque tokens that replace other players' GUIDs in GET /get.
     this.guidMaskKey = resolveGuidMaskKey(config);
+    // Log-only security telemetry (see observe.js). It reuses the /get mask so
+    // its rows never hold a real GUID.
+    this.observer = new SecurityObserver({
+      storage,
+      config,
+      maskGuid: (publicKey, userGuid) => this.maskUserGuid(publicKey, userGuid)
+    });
   }
 
   async authorize() {
@@ -88,6 +96,9 @@ class LeaderboardService {
       after: { id, username, score, extra },
       meta
     });
+
+    // Only read by observe mode; the route's response does not use it.
+    return { existed: Boolean(existing) };
   }
 
   // Admin-only since stage 1 (the route checks auth before calling this).
@@ -293,6 +304,16 @@ class LeaderboardService {
       userGuid: normalizeOptionalString(query.userGuid),
       limit
     });
+  }
+
+  // Observe-mode rows, newest first. Filters: reason, route, since, limit.
+  async getAdminObservations(query) {
+    return this.observer.listObservations(query);
+  }
+
+  // Observe-mode report for a period (default: the last 7 days).
+  async getAdminObservationSummary(query) {
+    return this.observer.getSummary(query);
   }
 
   async adminUpsertEntry(body, meta) {

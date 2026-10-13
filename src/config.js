@@ -19,6 +19,16 @@ function parseCsv(value) {
     .filter(Boolean);
 }
 
+function parseOptionalPositiveInt(value) {
+  return parsePositiveInt(value, undefined);
+}
+
+// Anything except an explicit "off" (or 0/false/no) leaves the switch on.
+function parseSwitch(value) {
+  const text = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return !["off", "0", "false", "no"].includes(text);
+}
+
 const sqlitePath = process.env.SQLITE_PATH
   ? path.resolve(process.cwd(), process.env.SQLITE_PATH)
   : path.resolve(process.cwd(), "data", "leaderboard.sqlite");
@@ -53,5 +63,21 @@ module.exports = {
     "https://onboarding-bridge-production.up.railway.app/api/switchmax",
   onboardSharedSecret: process.env.ONBOARD_SHARED_SECRET || "",
   // How long to wait on the onboarding call before giving up (ms).
-  onboardTimeoutMs: parsePositiveInt(process.env.ONBOARD_TIMEOUT_MS, 5000)
+  onboardTimeoutMs: parsePositiveInt(process.env.ONBOARD_TIMEOUT_MS, 5000),
+  // Observe mode: log-only security telemetry, nothing is ever rejected. All
+  // optional; blank values fall back to the defaults in observe.js.
+  observe: {
+    // SECURITY_OBSERVE=off is the kill switch for every observation write.
+    enabled: parseSwitch(process.env.SECURITY_OBSERVE),
+    expectedPublicKeys: parseCsv(process.env.OBSERVE_EXPECTED_PUBLIC_KEYS),
+    maxScore: parseOptionalPositiveInt(process.env.OBSERVE_MAX_SCORE),
+    maxUsernameLength: parseOptionalPositiveInt(process.env.OBSERVE_MAX_USERNAME_LENGTH),
+    // Proposed rate limits as "<requests>/<window seconds>", e.g. 30/600.
+    rateAuthorize: process.env.OBSERVE_RATE_AUTHORIZE || "",
+    rateUpload: process.env.OBSERVE_RATE_UPLOAD || "",
+    rateUploadGuid: process.env.OBSERVE_RATE_UPLOAD_GUID || "",
+    rateProfile: process.env.OBSERVE_RATE_PROFILE || "",
+    maxRowsPerHour: parseOptionalPositiveInt(process.env.OBSERVE_MAX_ROWS_PER_HOUR),
+    maxIssuedPerHour: parseOptionalPositiveInt(process.env.OBSERVE_MAX_ISSUED_PER_HOUR)
+  }
 };

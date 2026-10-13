@@ -9,6 +9,7 @@ async function main() {
 
   const service = new LeaderboardService(storage, config);
   const app = createApp(service, config);
+  service.observer.start();
 
   const server = app.listen(config.port, () => {
     const storageLabel = config.databaseUrl ? "postgres" : "sqlite";
@@ -18,6 +19,11 @@ async function main() {
   async function shutdown(signal) {
     console.log(`Received ${signal}, shutting down leaderboard backend...`);
     server.close(async () => {
+      // Last flush of the observe-mode traffic counts; never waits long.
+      await Promise.race([
+        service.observer.stop(),
+        new Promise((resolve) => setTimeout(resolve, 2000))
+      ]).catch(() => {});
       await storage.close();
       process.exit(0);
     });

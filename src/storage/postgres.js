@@ -57,6 +57,7 @@ class PostgresStorage {
     `);
 
     await this.initializeEntryHistory();
+    await this.initializeObservation();
   }
 
   // Audit trail of entry changes. Only ever creates a NEW table and its own
@@ -96,6 +97,63 @@ class PostgresStorage {
       `);
     } catch (error) {
       console.error(`Entry history table setup failed: ${error.message}`);
+    }
+  }
+
+  // Observe-mode tables (see observe.js). Same rules as entry_history: only NEW
+  // tables and their own indexes, nothing that touches or locks entries or
+  // player_profiles. Each table is set up on its own, and a failure is logged
+  // and swallowed so the service still boots; its writes then fail quietly.
+  async initializeObservation() {
+    const tables = {
+      issued_guids: [`
+        CREATE TABLE IF NOT EXISTS issued_guids (
+          guid TEXT PRIMARY KEY,
+          issued_at BIGINT NOT NULL,
+          ip TEXT NOT NULL DEFAULT '',
+          ip_source TEXT NOT NULL DEFAULT '',
+          user_agent TEXT NOT NULL DEFAULT ''
+        );
+      `, `
+        CREATE INDEX IF NOT EXISTS idx_issued_guids_issued_at ON issued_guids(issued_at);
+      `],
+      security_observations: [`
+        CREATE TABLE IF NOT EXISTS security_observations (
+          id BIGSERIAL PRIMARY KEY,
+          at BIGINT NOT NULL,
+          route TEXT NOT NULL,
+          reason TEXT NOT NULL,
+          ip TEXT NOT NULL DEFAULT '',
+          ip_source TEXT NOT NULL DEFAULT '',
+          user_agent TEXT NOT NULL DEFAULT '',
+          key_prefix TEXT NOT NULL DEFAULT '',
+          guid_ref TEXT NOT NULL DEFAULT '',
+          detail TEXT NOT NULL DEFAULT ''
+        );
+      `, `
+        CREATE INDEX IF NOT EXISTS idx_security_observations_at ON security_observations(at);
+      `, `
+        CREATE INDEX IF NOT EXISTS idx_security_observations_reason_at ON security_observations(reason, at);
+      `],
+      traffic_hourly: [`
+        CREATE TABLE IF NOT EXISTS traffic_hourly (
+          hour BIGINT NOT NULL,
+          route TEXT NOT NULL,
+          dim_key TEXT NOT NULL,
+          count BIGINT NOT NULL DEFAULT 0,
+          PRIMARY KEY (hour, route, dim_key)
+        );
+      `]
+    };
+
+    for (const [table, statements] of Object.entries(tables)) {
+      try {
+        for (const statement of statements) {
+          await this.pool.query(statement);
+        }
+      } catch (error) {
+        console.error(`Observation table setup failed (${table}): ${error.message}`);
+      }
     }
   }
 
@@ -280,6 +338,208 @@ class PostgresStorage {
     return result.rows.map(mapEntryHistory);
   }
 
+  // Range of the scores stored by game uploads since a time (observe summary).
+  async getUploadScoreRange(since) {
+    const result = await this.pool.query(`
+      SELECT
+        COUNT(*) AS count,
+        MIN(new_score) AS min_score,
+        MAX(new_score) AS max_score
+      FROM entry_history
+      WHERE at >= $1 AND action IN ('upload_insert', 'upload_overwrite')
+    `, [since]);
+
+    return mapScoreRange(result.rows[0]);
+  }
+
+  async insertIssuedGuid(record) {
+    await this.pool.query(`
+      INSERT INTO issued_guids (
+        guid,
+        issued_at,
+        ip,
+        ip_source,
+        user_agent
+      ) VALUES ($1, $2, $3, $4, $5)
+      ON CONFLICT(guid) DO NOTHING
+    `, [
+      record.guid,
+      record.issuedAt,
+      record.ip,
+      record.ipSource,
+      record.userAgent
+    ]);
+  }
+
+  async isGuidIssued(guid) {
+    const result = await this.pool.query(`
+      SELECT 1
+      FROM issued_guids
+      WHERE guid = $1
+      LIMIT 1
+    `, [guid]);
+
+    return result.rows.length > 0;
+  }
+
+  async countIssuedGuids(since) {
+    const result = await this.pool.query(`
+      SELECT
+        ip_source,
+        COUNT(*) AS count,
+        COUNT(DISTINCT ip) AS distinct_ips
+      FROM issued_guids
+      WHERE issued_at >= $1
+      GROUP BY ip_source
+      ORDER BY ip_source ASC
+    `, [since]);
+
+    return mapIssuedCounts(result.rows);
+  }
+
+  async insertSecurityObservation(record) {
+    await this.pool.query(`
+      INSERT INTO security_observations (
+        at,
+        route,
+        reason,
+        ip,
+        ip_source,
+        user_agent,
+        key_prefix,
+        guid_ref,
+        detail
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    `, [
+      record.at,
+      record.route,
+      record.reason,
+      record.ip,
+      record.ipSource,
+      record.userAgent,
+      record.keyPrefix,
+      record.guidRef,
+      record.detail
+    ]);
+  }
+
+  // Newest first. reason and route are optional filters ('' = any).
+  async listSecurityObservations({ reason, route, since, limit }) {
+    const conditions = ["at >= $1"];
+    const values = [since];
+
+    if (reason) {
+      values.push(reason);
+      conditions.push(`reason = $${values.length}`);
+    }
+
+    if (route) {
+      values.push(route);
+      conditions.push(`route = $${values.length}`);
+    }
+
+    values.push(limit);
+
+    const result = await this.pool.query(`
+      SELECT
+        id,
+        at,
+        route,
+        reason,
+        ip,
+        ip_source,
+        user_agent,
+        key_prefix,
+        guid_ref,
+        detail
+      FROM security_observations
+      WHERE ${conditions.join(" AND ")}
+      ORDER BY at DESC, id DESC
+      LIMIT $${values.length}
+    `, values);
+
+    return result.rows.map(mapSecurityObservation);
+  }
+
+  // Counts per reason and route. Rows with and without a guid_ref are grouped
+  // apart, which separates the per-GUID rate rows from the per-IP ones.
+  async summarizeSecurityObservations(since) {
+    const result = await this.pool.query(`
+      SELECT
+        reason,
+        route,
+        (guid_ref <> '') AS has_guid_ref,
+        COUNT(*) AS count,
+        COUNT(DISTINCT ip) AS distinct_ips,
+        COUNT(DISTINCT guid_ref) AS distinct_guid_refs,
+        MIN(at) AS first_at,
+        MAX(at) AS last_at
+      FROM security_observations
+      WHERE at >= $1
+      GROUP BY reason, route, (guid_ref <> '')
+      ORDER BY reason ASC, route ASC, has_guid_ref ASC
+    `, [since]);
+
+    return result.rows.map(mapObservationSummary);
+  }
+
+  // Upsert-increment, one statement per batch. The (hour, route, dimKey) of the
+  // rows passed in are unique, which ON CONFLICT DO UPDATE requires.
+  async incrementTrafficHourly(rows) {
+    for (let start = 0; start < rows.length; start += 500) {
+      const batch = rows.slice(start, start + 500);
+      await this.pool.query(`
+        INSERT INTO traffic_hourly (hour, route, dim_key, count)
+        SELECT * FROM unnest($1::bigint[], $2::text[], $3::text[], $4::bigint[])
+        ON CONFLICT (hour, route, dim_key) DO UPDATE SET
+          count = traffic_hourly.count + excluded.count
+      `, [
+        batch.map((row) => row.hour),
+        batch.map((row) => row.route),
+        batch.map((row) => row.dimKey),
+        batch.map((row) => row.count)
+      ]);
+    }
+  }
+
+  async summarizeTraffic(since) {
+    const result = await this.pool.query(`
+      SELECT
+        route,
+        dim_key,
+        SUM(count) AS count
+      FROM traffic_hourly
+      WHERE hour >= $1
+      GROUP BY route, dim_key
+      ORDER BY route ASC, dim_key ASC
+    `, [since]);
+
+    return result.rows.map(mapTraffic);
+  }
+
+  async listTrafficHourly(since, limit) {
+    const result = await this.pool.query(`
+      SELECT
+        hour,
+        route,
+        dim_key,
+        count
+      FROM traffic_hourly
+      WHERE hour >= $1
+      ORDER BY hour DESC, route ASC, dim_key ASC
+      LIMIT $2
+    `, [since, limit]);
+
+    return result.rows.map(mapTraffic);
+  }
+
+  // Retention for the three observe-mode tables only.
+  async pruneObservationData(cutoff) {
+    await this.pool.query("DELETE FROM issued_guids WHERE issued_at < $1", [cutoff]);
+    await this.pool.query("DELETE FROM security_observations WHERE at < $1", [cutoff]);
+    await this.pool.query("DELETE FROM traffic_hourly WHERE hour < $1", [cutoff]);
+  }
+
   async getPlayerProfileByEmail(email) {
     const result = await this.pool.query(`
       SELECT
@@ -399,6 +659,65 @@ function mapEntryHistory(row) {
 // BIGINT columns arrive as strings; keep NULL as null instead of 0.
 function nullableNumber(value) {
   return value === null || value === undefined ? null : Number(value);
+}
+
+function mapScoreRange(row) {
+  return {
+    count: Number(row.count),
+    min: nullableNumber(row.min_score),
+    max: nullableNumber(row.max_score)
+  };
+}
+
+function mapIssuedCounts(rows) {
+  const bySource = rows.map((row) => ({
+    ipSource: row.ip_source,
+    count: Number(row.count),
+    distinctIps: Number(row.distinct_ips)
+  }));
+
+  return {
+    total: bySource.reduce((total, row) => total + row.count, 0),
+    bySource
+  };
+}
+
+function mapSecurityObservation(row) {
+  return {
+    id: Number(row.id),
+    at: Number(row.at),
+    route: row.route,
+    reason: row.reason,
+    ip: row.ip,
+    ipSource: row.ip_source,
+    userAgent: row.user_agent,
+    keyPrefix: row.key_prefix,
+    guidRef: row.guid_ref,
+    detail: row.detail
+  };
+}
+
+function mapObservationSummary(row) {
+  return {
+    reason: row.reason,
+    route: row.route,
+    hasGuidRef: Boolean(row.has_guid_ref),
+    count: Number(row.count),
+    distinctIps: Number(row.distinct_ips),
+    distinctGuidRefs: Number(row.distinct_guid_refs),
+    firstAt: Number(row.first_at),
+    lastAt: Number(row.last_at)
+  };
+}
+
+// `hour` is absent on the per-period totals.
+function mapTraffic(row) {
+  return {
+    ...(row.hour === undefined ? {} : { hour: Number(row.hour) }),
+    route: row.route,
+    dimKey: row.dim_key,
+    count: Number(row.count)
+  };
 }
 
 function mapPlayerProfile(row) {

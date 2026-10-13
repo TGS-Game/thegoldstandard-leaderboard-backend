@@ -4,7 +4,9 @@
 // cookie attributes (HttpOnly; Secure; SameSite=None; Partitioned), and the
 // rule that CSP frame-ancestors is set on admin pages only. Stage 1 security:
 // GUID masking in /get, admin-only /entry/delete + /entry/update-username, the
-// entry history trail, and the Unity multipart upload shape.
+// entry history trail, and the Unity multipart upload shape. Observe mode
+// (log-only): every observation type, identical responses with it on and off,
+// caps, bounded memory, a failing/hung observation store, redaction, admin reads.
 //
 // Run: node test/run-tests.js
 
@@ -23,6 +25,15 @@ const ADMIN_TOKEN = "test-admin-token";
 const SESSION_SECRET = "test-session-secret";
 const SSO_SECRET = "test-sso-secret";
 const PUBLIC_KEY = "testpublickey123";
+// The shipped game's key (public) and an older build's key that must only be
+// recorded, never blocked.
+const LIVE_KEY = "536aec42d31fa4ec5c486c219f9821f6a145562fcb069c6f19f40786fdc38678";
+const OLD_KEY = `ff61800f${"0".repeat(56)}`;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const unityHeaders = {
+  "User-Agent": "UnityPlayer/2022.3.10f1 (UnityWebRequest/1.0, libcurl/8.4.0-DEV)",
+  "X-Unity-Version": "2022.3.10f1"
+};
 
 const testConfig = {
   port: 0,
@@ -142,7 +153,7 @@ function startServer(config, storage) {
     const server = https.createServer(tlsOptions, app);
     server.listen(0, "127.0.0.1", () => {
       const { port } = server.address();
-      resolve({ server, base: `https://127.0.0.1:${port}` });
+      resolve({ server, service, base: `https://127.0.0.1:${port}` });
     });
   });
 }
@@ -173,6 +184,28 @@ const warnLines = [];
 const errorLines = [];
 console.warn = (...args) => warnLines.push(args.join(" "));
 console.error = (...args) => errorLines.push(args.map(String).join(" "));
+// Observe-mode lines (console.log, prefixed "[observe]") are captured too.
+const observeLines = [];
+const printLine = console.log;
+console.log = (...args) => {
+  const line = args.map(String).join(" ");
+  if (line.startsWith("[observe]")) {
+    observeLines.push(line);
+  } else {
+    printLine(...args);
+  }
+};
+
+// Observation work runs after the response; wait until its queue is empty.
+async function settle(target, maxMs = 2000) {
+  const observer = target.service.observer;
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  await sleep(30);
+  const deadline = Date.now() + maxMs;
+  while ((observer.queue.length > 0 || observer.inFlight > 0) && Date.now() < deadline) {
+    await sleep(5);
+  }
+}
 
 async function getJson(base, urlPath, headers) {
   const res = await request(base, { path: urlPath, headers });
@@ -604,7 +637,368 @@ async function main() {
     open.server.close();
   }
 
-  check("no unexpected server errors were logged", errorLines.every((l) => /Entry history write failed/.test(l)), JSON.stringify(errorLines));
+  // ===========================================================================
+  // OBSERVE MODE (log-only). Every check below also asserts that responses are
+  // the same as with SECURITY_OBSERVE=off.
+  // ===========================================================================
+  const observeOffConfig = { ...testConfig, observe: { enabled: false } };
+  const obsStorage = new FakeStorage();
+  const offStorage = new FakeStorage();
+  const obs = await startServer({ ...testConfig, observe: {} }, obsStorage);
+  const off = await startServer(observeOffConfig, offStorage);
+  const usedGuids = [];
+  const authorizeOn = async (target) => {
+    const guid = (await request(target.base, { path: "/authorize", headers: unityHeaders })).body.trim();
+    usedGuids.push(guid);
+    return guid;
+  };
+  const upload = (target, fields, headers = {}) => {
+    const form = multipartForm(fields);
+    return request(target.base, { method: "POST", path: "/entry/upload", headers: { ...unityHeaders, ...headers, ...form.headers }, body: form.body });
+  };
+
+  console.log("\n=== OBSERVE: normal game flow records nothing ===");
+  {
+    // An old registry row, to prove the opportunistic prune (first request).
+    obsStorage.issuedGuids.set("old-guid", { guid: "old-guid", issuedAt: Math.floor(Date.now() / 1000) - 91 * 86400, ip: "", ipSource: "socket", userAgent: "" });
+    const linesBefore = observeLines.length;
+
+    const guid = await authorizeOn(obs);
+    check("observe: /authorize still returns a plain GUID", UUID_RE.test(guid), guid);
+    const up = await upload(obs, { publicKey: LIVE_KEY, username: "Dana-GB-123.45", score: "12345", extra: " ", userGuid: guid });
+    check("observe: game-shaped upload -> 200 OK", up.status === 200 && up.body === "OK", `status=${up.status} body=${up.body}`);
+    const get = await getJson(obs.base, `/get?publicKey=${LIVE_KEY}&userGuid=${guid}&isInAscendingOrder=0&skip=0&take=100&timePeriod=0`, unityHeaders);
+    check("observe: /get returns the row with the real guid", get.status === 200 && get.json.length === 1 && get.json[0].UserGuid === guid && get.json[0].Extra === " ", get.body);
+    const guid2 = await authorizeOn(obs);
+    const up2 = await upload(obs, { publicKey: LIVE_KEY, username: "Dana-GB-200", score: "200", extra: " ", userGuid: guid2 });
+    check("observe: second upload (raw score in the name) -> 200", up2.status === 200, `status=${up2.status}`);
+    const profile = await request(obs.base, { method: "POST", path: "/player-profile", ...multipartForm({ name: "Carol", email: "carol@example.com", country: "US", consentAccepted: "true" }) });
+    check("observe: normal /player-profile -> 200", profile.status === 200 && profile.body === '{"ok":true}', profile.body);
+
+    await settle(obs);
+    check("observe: normal flow wrote NO observation rows", obsStorage.observations.length === 0, JSON.stringify(obsStorage.observations));
+    check("observe: normal flow printed NO [observe] lines", observeLines.length === linesBefore, JSON.stringify(observeLines.slice(linesBefore)));
+    const issuedRow = obsStorage.issuedGuids.get(guid);
+    check("observe: issued GUID was registered", Boolean(issuedRow) && obsStorage.issuedGuids.has(guid2) && issuedRow.ipSource === "socket" && issuedRow.ip === "127.0.0.1" && issuedRow.userAgent.startsWith("UnityPlayer/"), JSON.stringify(issuedRow));
+    check("observe: registry rows older than 90 days were pruned", !obsStorage.issuedGuids.has("old-guid"));
+  }
+
+  console.log("\n=== OBSERVE: each observation type, response identical to observe-off ===");
+  {
+    // Sends the same request to the observing server and to the one with
+    // observation off, and compares status, body and headers.
+    const pair = async (name, build, reasons, { ignoreEntryDate = false } = {}) => {
+      const before = obsStorage.observations.length;
+      const [on, plain] = [await build(obs), await build(off)];
+      // "date" is the clock. With ignoreEntryDate the stored upload second (and
+      // the etag/length derived from it) is left out too: the two servers'
+      // rows were written by two separate uploads.
+      const skipped = ignoreEntryDate ? ["date", "etag"] : ["date"];
+      const strip = (headers) => JSON.stringify(Object.entries(headers).filter(([key]) => !skipped.includes(key)));
+      const text = (body) => (ignoreEntryDate ? body.replace(/"Date":\d+/g, '"Date":0') : body);
+      check(`${name}: same status/body/headers as observe-off`, on.status === plain.status && text(on.body) === text(plain.body) && strip(on.headers) === strip(plain.headers), `on=${on.status} ${on.body} off=${plain.status} ${plain.body}`);
+      await settle(obs);
+      const added = obsStorage.observations.slice(before);
+      for (const reason of reasons) {
+        check(`${name}: recorded ${reason}`, added.some((o) => o.reason === reason), JSON.stringify(added.map((o) => o.reason)));
+      }
+      return { on, plain, added };
+    };
+    // Each server gets a GUID it issued itself, so only the tested field is odd.
+    const issued = async (target) => (target === obs ? authorizeOn(obs) : (await request(off.base, { path: "/authorize" })).body.trim());
+    const good = { publicKey: LIVE_KEY, username: "Eve-US-9.00", score: "900", extra: " " };
+
+    const oldKey = await pair("upload with the ff61800f key", async (t) => upload(t, { ...good, publicKey: OLD_KEY, userGuid: await issued(t) }), ["unexpected_public_key"]);
+    check("old key upload -> 200 OK as before", oldKey.on.status === 200 && oldKey.on.body === "OK");
+    check("unexpected_public_key row has prefix + length only", oldKey.added.length === 1 && oldKey.added[0].keyPrefix === "ff61800f" && JSON.parse(oldKey.added[0].detail).length === 64 && oldKey.added[0].route === "/entry/upload", JSON.stringify(oldKey.added));
+    check("old key entry was stored exactly as with observe off", (await obsStorage.listEntries(OLD_KEY)).length === 1 && (await offStorage.listEntries(OLD_KEY)).length === 1);
+
+    const madeUp = crypto.randomUUID();
+    usedGuids.push(madeUp);
+    const notIssued = await pair("upload with a made-up GUID", (t) => upload(t, { ...good, userGuid: madeUp }), ["guid_not_issued"]);
+    const notIssuedRow = notIssued.added.find((o) => o.reason === "guid_not_issued");
+    check("made-up GUID upload -> 200 OK as before", notIssued.on.status === 200 && notIssued.on.body === "OK");
+    check("guid_not_issued says uuid-shaped, no earlier entry", notIssued.added.length === 1 && JSON.parse(notIssuedRow.detail).uuidShaped === true && JSON.parse(notIssuedRow.detail).entryExisted === false, JSON.stringify(notIssued.added));
+    check("guid_ref is the /get mask, not the GUID", notIssuedRow.guidRef === obs.service.maskUserGuid(LIVE_KEY, madeUp) && MASK_PATTERN.test(notIssuedRow.guidRef), notIssuedRow.guidRef);
+    const again = await pair("re-upload with the same made-up GUID", (t) => upload(t, { ...good, userGuid: madeUp }), ["guid_not_issued"]);
+    check("guid_not_issued notes the entry already existed", JSON.parse(again.added[0].detail).entryExisted === true, JSON.stringify(again.added));
+
+    const shape = await pair("upload with a non-UUID GUID", (t) => upload(t, { ...good, userGuid: "typed-by-hand" }), ["guid_shape", "guid_not_issued"]);
+    check("guid_shape records the length only", JSON.parse(shape.added.find((o) => o.reason === "guid_shape").detail).length === 13);
+
+    const yes = await pair("upload with extra 'yes'", async (t) => upload(t, { ...good, username: "Yes-GB-9.00", extra: "yes", userGuid: await issued(t) }), ["extra_unexpected"]);
+    const yesRowOn = (await obsStorage.listEntries(LIVE_KEY)).find((e) => e.username === "Yes-GB-9.00");
+    const yesRowOff = (await offStorage.listEntries(LIVE_KEY)).find((e) => e.username === "Yes-GB-9.00");
+    check("extra 'yes' upload -> 200 and stored exactly as before", yes.on.status === 200 && yesRowOn.extra === "yes" && yesRowOff.extra === "yes" && yesRowOn.score === 900, JSON.stringify(yesRowOn));
+    check("extra_unexpected records the value", yes.added.length === 1 && JSON.parse(yes.added[0].detail).value === "yes", JSON.stringify(yes.added));
+    const yesPadded = await pair("upload with extra ' YES\\n'", async (t) => upload(t, { ...good, extra: " YES\n", userGuid: await issued(t) }), ["extra_unexpected"]);
+    check("extra value is trimmed + lowercased", JSON.parse(yesPadded.added[0].detail).value === "yes");
+
+    const negative = await pair("upload with a negative score", async (t) => upload(t, { ...good, username: "Neg-GB--5", score: "-5", userGuid: await issued(t) }), ["score_out_of_bounds"]);
+    check("negative score recorded with its value, still 200", negative.on.status === 200 && JSON.parse(negative.added[0].detail).problem === "negative" && JSON.parse(negative.added[0].detail).value === -5 && negative.added.length === 1, JSON.stringify(negative.added));
+    const huge = await pair("upload with a huge score", async (t) => upload(t, { ...good, username: "Big-GB-999999999", score: "999999999", userGuid: await issued(t) }), ["score_out_of_bounds"]);
+    check("score above max recorded, still 200", huge.on.status === 200 && JSON.parse(huge.added[0].detail).problem === "above_max" && JSON.parse(huge.added[0].detail).value === 999999999, JSON.stringify(huge.added));
+    const lax = await pair("upload with score '12abc'", async (t) => upload(t, { ...good, score: "12abc", userGuid: await issued(t) }), ["score_out_of_bounds"]);
+    check("non-integer score still accepted exactly as before (200)", lax.on.status === 200 && lax.plain.status === 200);
+    const nan = await pair("upload with score 'abc'", async (t) => upload(t, { ...good, score: "abc", userGuid: await issued(t) }), ["score_out_of_bounds"]);
+    check("unparseable score -> the same 400 as before", nan.on.status === 400 && nan.on.body === "score must be an integer.", nan.on.body);
+
+    const noShape = await pair("upload with an unpacked username", async (t) => upload(t, { ...good, username: "PrivatePersonName", userGuid: await issued(t) }), ["username_shape"]);
+    check("username_shape (shape) has lengths, not the name", noShape.added.length === 1 && JSON.parse(noShape.added[0].detail).relation === "shape_mismatch" && JSON.parse(noShape.added[0].detail).usernameLength === 17 && !JSON.stringify(noShape.added).includes("PrivatePerson"), JSON.stringify(noShape.added));
+    const mismatch = await pair("upload whose name score differs", async (t) => upload(t, { ...good, username: "Dana-GB-777", score: "12345", userGuid: await issued(t) }), ["username_shape"]);
+    check("username_shape records the relation", JSON.parse(mismatch.added[0].detail).relation === "mismatch" && JSON.parse(mismatch.added[0].detail).tail === "777" && JSON.parse(mismatch.added[0].detail).score === 12345, JSON.stringify(mismatch.added));
+
+    const longName = `${"N".repeat(70)}-GB-9.00`;
+    const tooLong = await pair("upload with a long username", async (t) => upload(t, { ...good, username: longName, userGuid: await issued(t) }), ["username_too_long"]);
+    check("username_too_long records the length; name stored as before", tooLong.added.length === 1 && JSON.parse(tooLong.added[0].detail).length === 78 && (await obsStorage.listEntries(LIVE_KEY)).some((e) => e.username === longName), JSON.stringify(tooLong.added));
+
+    const badEmail = await pair("profile with a malformed email", (t) => request(t.base, { method: "POST", path: "/player-profile", ...multipartForm({ name: "Mallory", email: "secret-address-at-nowhere", country: "US", consentAccepted: "true" }) }), ["profile_fields"]);
+    check("malformed email -> the same 400 as before", badEmail.on.status === 400 && badEmail.on.body === "email is invalid.", badEmail.on.body);
+    const longProfile = await pair("profile with an over-long name", (t) => request(t.base, { method: "POST", path: "/player-profile", body: { name: "P".repeat(80), email: "long.name@example.com", country: "US", consentAccepted: true } }), ["profile_fields"]);
+    check("over-long name is still accepted (200)", longProfile.on.status === 200 && longProfile.on.body === '{"ok":true}');
+    const profileText = JSON.stringify([...badEmail.added, ...longProfile.added]);
+    check("profile_fields holds lengths/booleans only", JSON.parse(longProfile.added[0].detail).nameLength === 80 && JSON.parse(longProfile.added[0].detail).nameTooLong === true && JSON.parse(badEmail.added[0].detail).emailValid === false && !profileText.includes("secret-address") && !profileText.includes("long.name@") && !profileText.includes("Mallory"), profileText);
+
+    // Same GUID on both servers, so the masked UserGuid must match as well.
+    const otherKey = `ff61800f${"1".repeat(56)}`;
+    await upload(obs, { ...good, publicKey: otherKey, userGuid: madeUp });
+    await upload(off, { ...good, publicKey: otherKey, userGuid: madeUp });
+    const getOld = await pair("GET /get with an ff61800f-style key", (t) => request(t.base, { path: `/get?publicKey=${otherKey}&take=10` }), ["unexpected_public_key"], { ignoreEntryDate: true });
+    check("/get body is identical with observation on", getOld.on.status === 200 && JSON.parse(getOld.on.body).length === 1 && MASK_PATTERN.test(JSON.parse(getOld.on.body)[0].UserGuid), getOld.on.body);
+    const normalise = (body) => body.replace(/"Date":\d+/g, '"Date":0');
+    const getLiveOn = await request(obs.base, { path: `/get?publicKey=${LIVE_KEY}&take=100` });
+    const getLiveOff = await request(off.base, { path: `/get?publicKey=${LIVE_KEY}&take=100` });
+    // The first section uploaded two extra rows to the observing server only.
+    const onRows = JSON.parse(normalise(getLiveOn.body)).filter((row) => !row.Username.startsWith("Dana-GB-123") && row.Username !== "Dana-GB-200");
+    const offRows = JSON.parse(normalise(getLiveOff.body));
+    const shapeOf = (rows) => JSON.stringify(rows.map((row) => [row.Username, row.Score, row.Extra, Object.keys(row).join(",")]).sort());
+    check("/get lists the same stored rows on both servers", getLiveOn.status === 200 && shapeOf(onRows) === shapeOf(offRows) && offRows.length > 8, `${onRows.length} vs ${offRows.length}`);
+
+    check("observe-off server never touched the observation store", offStorage.observeCalls === 0 && offStorage.observations.length === 0 && offStorage.issuedGuids.size === 0 && offStorage.traffic.size === 0, `calls=${offStorage.observeCalls}`);
+    check("observe-off server holds no observation state", off.service.observer.rateCounters.size === 0 && off.service.observer.pendingTraffic.size === 0 && off.service.observer.recentGuids.size === 0);
+  }
+
+  console.log("\n=== OBSERVE: client-contract telemetry ===");
+  {
+    const guid = await authorizeOn(obs);
+    await upload(obs, { publicKey: LIVE_KEY, username: "Web-GB-1.00", score: "100", extra: " ", userGuid: guid }, { Origin: "https://play.example.com" });
+    await request(obs.base, { path: `/get?publicKey=${LIVE_KEY}`, headers: { Origin: "https://www.example.org", "User-Agent": "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/126.0 Mobile Safari/537.36", "X-Real-IP": "198.51.100.9", "X-Forwarded-For": "198.51.100.9, 10.0.0.1" } });
+    await settle(obs);
+    await obs.service.observer.flushTraffic();
+    const rows = [...obsStorage.traffic.values()];
+    const hourOk = rows.every((row) => row.hour % 3600 === 0 && Number.isInteger(row.count) && row.count > 0);
+    check("traffic_hourly rows are hour-bucketed counts", rows.length > 0 && hourOk, JSON.stringify(rows.slice(0, 3)));
+    const unityUpload = rows.find((row) => row.route === "/entry/upload" && row.dimKey === "c|ct=multipart;o=play.example.com;uv=2022.3.10f1;ua=UnityPlayer/2022.3.10f1;g=1;s=200");
+    check("upload tuple: multipart + origin host + unity version + UA family + guid + status", Boolean(unityUpload), JSON.stringify(rows.filter((row) => row.route === "/entry/upload").map((row) => row.dimKey)));
+    const webGet = rows.find((row) => row.route === "/get" && row.dimKey === "c|ct=none;o=www.example.org;uv=-;ua=browser:Chrome:Android;g=0;s=200");
+    check("website /get tuple: no content-type, origin, browser family, no userGuid", Boolean(webGet), JSON.stringify(rows.filter((row) => row.route === "/get").map((row) => row.dimKey)));
+    check("client address shape is aggregated (x-real-ip vs x-forwarded-for)", rows.some((row) => row.route === "/get" && row.dimKey === "addr|src=x-real-ip;xri=1;xff=2;xri_eq_xff=first;sock=loopback") && rows.some((row) => row.dimKey === "addr|src=socket;xri=0;xff=0;xri_eq_xff=-;sock=loopback"), JSON.stringify(rows.filter((row) => row.dimKey.startsWith("addr|")).map((row) => row.dimKey)));
+    check("public keys are aggregated by prefix only", rows.some((row) => row.dimKey === "key|536aec42:64:expected") && rows.some((row) => row.dimKey === "key|ff61800f:64:unexpected"));
+    const before = rows.find((row) => row.route === "/authorize" && row.dimKey.startsWith("c|")).count;
+    await request(obs.base, { path: "/authorize", headers: unityHeaders });
+    await settle(obs);
+    await obs.service.observer.flushTraffic();
+    const after = [...obsStorage.traffic.values()].find((row) => row.route === "/authorize" && row.dimKey.startsWith("c|")).count;
+    check("a second flush increments the same row (upsert)", after === before + 1, `${before} -> ${after}`);
+  }
+
+  console.log("\n=== OBSERVE: rate thresholds never block, one row per window ===");
+  {
+    let clock = 0;
+    const rateStorage = new FakeStorage();
+    const rate = await startServer({
+      ...testConfig,
+      observe: {
+        now: () => Math.floor(Date.now() / 1000) + clock,
+        rateAuthorize: { max: 3, windowSeconds: 600 },
+        rateUpload: "4/600",
+        rateUploadGuid: { max: 2, windowSeconds: 600 },
+        rateProfile: { max: 2, windowSeconds: 3600 }
+      }
+    }, rateStorage);
+    const rateRows = (route) => rateStorage.observations.filter((o) => o.reason === "would_rate_limit" && o.route === route);
+
+    const statuses = [];
+    for (let i = 0; i < 7; i++) statuses.push((await request(rate.base, { path: "/authorize" })).status);
+    await settle(rate);
+    check("7 x /authorize over a limit of 3 -> all 200", statuses.every((s) => s === 200), JSON.stringify(statuses));
+    check("exactly ONE would_rate_limit row for that window", rateRows("/authorize").length === 1, JSON.stringify(rateRows("/authorize")));
+    const firstRow = rateRows("/authorize")[0];
+    check("row has the count reached, limit, window and client address", firstRow && JSON.parse(firstRow.detail).count === 4 && JSON.parse(firstRow.detail).limit === 3 && JSON.parse(firstRow.detail).windowSeconds === 600 && JSON.parse(firstRow.detail).scope === "ip" && firstRow.ip === "127.0.0.1" && firstRow.ipSource === "socket", JSON.stringify(firstRow));
+
+    for (const ip of ["203.0.113.1", "203.0.113.2"]) {
+      for (let i = 0; i < 3; i++) await request(rate.base, { path: "/authorize", headers: { "X-Real-IP": ip } });
+    }
+    for (let i = 0; i < 5; i++) await request(rate.base, { path: "/authorize", headers: { "X-Forwarded-For": "198.51.100.1, 203.0.113.50" } });
+    await settle(rate);
+    check("clients are counted separately by x-real-ip", rateRows("/authorize").every((o) => !o.ip.startsWith("203.0.113.1") && o.ip !== "203.0.113.2"));
+    const xffRow = rateRows("/authorize").find((o) => o.ipSource === "x-forwarded-for-last");
+    check("without x-real-ip the LAST x-forwarded-for entry is the key", rateRows("/authorize").length === 2 && xffRow && xffRow.ip === "203.0.113.50", JSON.stringify(rateRows("/authorize")));
+
+    clock += 601;
+    for (let i = 0; i < 5; i++) await request(rate.base, { path: "/authorize" });
+    await settle(rate);
+    check("a new window records one more row (and no more)", rateRows("/authorize").filter((o) => o.ipSource === "socket").length === 2, JSON.stringify(rateRows("/authorize")));
+    check("an overdue flush ran from the request path side-effect free", rateStorage.traffic.size > 0);
+
+    const guid = (await request(rate.base, { path: "/authorize", headers: { "X-Real-IP": "203.0.113.9" } })).body.trim();
+    usedGuids.push(guid);
+    const uploadStatuses = [];
+    for (let i = 0; i < 6; i++) uploadStatuses.push((await upload(rate, { publicKey: LIVE_KEY, username: "Rate-GB-1.00", score: "100", extra: " ", userGuid: guid })).status);
+    await settle(rate);
+    check("6 x upload over both upload limits -> all 200", uploadStatuses.every((s) => s === 200), JSON.stringify(uploadStatuses));
+    const uploadRows = rateRows("/entry/upload").map((o) => ({ ...JSON.parse(o.detail), guidRef: o.guidRef }));
+    check("one per-IP row and one per-GUID row", uploadRows.length === 2 && uploadRows.filter((o) => o.scope === "ip" && o.count === 5 && o.guidRef === "").length === 1 && uploadRows.filter((o) => o.scope === "guid" && o.count === 3 && MASK_PATTERN.test(o.guidRef)).length === 1, JSON.stringify(uploadRows));
+    check("the entry was stored normally", (await rateStorage.getEntry(LIVE_KEY, guid)).score === 100);
+
+    const profileStatuses = [];
+    for (let i = 0; i < 5; i++) profileStatuses.push((await request(rate.base, { method: "POST", path: "/player-profile", body: { name: "Rae", email: `rae${i}@example.com`, country: "US", consentAccepted: true } })).status);
+    await settle(rate);
+    check("5 x /player-profile over a limit of 2 -> all 200, one row", profileStatuses.every((s) => s === 200) && rateRows("/player-profile").length === 1 && rateStorage.profiles.size === 5, JSON.stringify(profileStatuses));
+
+    const summary = await getJson(rate.base, "/admin/api/observation-summary", adminAuth);
+    const authorizeRate = summary.json.rate.find((r) => r.route === "/authorize");
+    check("summary: windows triggered, requests over the limit, distinct clients", authorizeRate.limit === 3 && authorizeRate.windowsTriggered === 3 && authorizeRate.requestsOverLimit === 8 && authorizeRate.distinctClients === 2, JSON.stringify(authorizeRate));
+    const guidRate = summary.json.rate.find((r) => r.route === "/entry/upload" && r.scope === "guid");
+    check("summary: per-GUID upload rate is reported apart", guidRate.limit === 2 && guidRate.windowsTriggered === 1 && guidRate.requestsOverLimit === 4 && guidRate.distinctClients === 1, JSON.stringify(guidRate));
+    rate.server.close();
+  }
+
+  console.log("\n=== OBSERVE: caps and bounded memory ===");
+  {
+    const capStorage = new FakeStorage();
+    const capped = await startServer({ ...testConfig, observe: { maxRowsPerHour: 3, maxDimensions: 5, maxRateKeys: 10, maxRecentGuids: 6, maxDistinctIps: 4, maxIssuedPerHour: 12 } }, capStorage);
+    const linesBefore = observeLines.length;
+    const statuses = [];
+    for (let i = 0; i < 9; i++) statuses.push((await request(capped.base, { path: `/get?publicKey=${OLD_KEY}` })).status);
+    await settle(capped);
+    const keyRows = capStorage.observations.filter((o) => o.reason === "unexpected_public_key");
+    const suppressed = capStorage.observations.filter((o) => o.reason === "observations_suppressed");
+    check("per-hour cap: only 3 rows of one reason are written", statuses.every((s) => s === 200) && keyRows.length === 3, `rows=${keyRows.length}`);
+    check("per-hour cap: a single observations_suppressed row follows", suppressed.length === 1 && JSON.parse(suppressed[0].detail).suppressedReason === "unexpected_public_key" && capStorage.observations.length === 4, JSON.stringify(suppressed));
+    check("per-hour cap: [observe] lines are capped the same way", observeLines.length - linesBefore === 4, `lines=${observeLines.length - linesBefore}`);
+
+    for (let i = 0; i < 14; i++) await request(capped.base, { path: `/get?publicKey=${LIVE_KEY}`, headers: { "User-Agent": `HostileBot${i}/1.0` } });
+    for (let i = 0; i < 30; i++) await request(capped.base, { path: "/authorize", headers: { "X-Real-IP": `192.0.2.${i}` } });
+    await settle(capped);
+    await capped.service.observer.flushTraffic();
+    const getTuples = [...capStorage.traffic.values()].filter((row) => row.route === "/get" && row.dimKey.startsWith("c|"));
+    check("traffic dimension cap: 5 distinct keys + 'other'", getTuples.length === 6 && getTuples.some((row) => row.dimKey === "c|other"), JSON.stringify(getTuples.map((row) => row.dimKey)));
+    check("traffic dimension cap: no request is lost from the count", getTuples.reduce((total, row) => total + row.count, 0) === 23);
+    const totals = [...capStorage.traffic.values()].find((row) => row.route === "/get" && row.dimKey === "obs|unexpected_public_key");
+    const hidden = [...capStorage.traffic.values()].find((row) => row.route === "/get" && row.dimKey === "obs_suppressed|unexpected_public_key");
+    check("suppressed observations are still counted in the aggregate", totals.count === 9 && hidden.count === 6, JSON.stringify([totals, hidden]));
+    const observer = capped.service.observer;
+    check("rate counter map stays bounded", observer.rateCounters.size <= 10, `size=${observer.rateCounters.size}`);
+    check("recent GUID map stays bounded", observer.recentGuids.size <= 6, `size=${observer.recentGuids.size}`);
+    check("distinct-IP sets stay bounded", observer.seenIps.get("/authorize").size <= 4 && [...capStorage.traffic.values()].find((row) => row.route === "/authorize" && row.dimKey === "ips|distinct").count === 4);
+    check("issued_guids writes are capped per hour", capStorage.issuedGuids.size === 12 && [...capStorage.traffic.values()].find((row) => row.dimKey === "registry|skipped_hourly_cap").count === 18, `size=${capStorage.issuedGuids.size}`);
+    check("pending traffic is empty after a flush", observer.pendingTraffic.size === 0);
+    capped.server.close();
+  }
+
+  console.log("\n=== OBSERVE: a failing or hung observation store never reaches the game ===");
+  for (const mode of ["failObserve", "hangObserve"]) {
+    const brokenStorage = new FakeStorage({ [mode]: true });
+    const broken = await startServer({ ...testConfig, observe: { maxQueue: 5 } }, brokenStorage);
+    const errorsBefore = errorLines.length;
+    const started = Date.now();
+
+    const authz = await request(broken.base, { path: "/authorize" });
+    const guid = authz.body.trim();
+    usedGuids.push(guid);
+    const fields = { publicKey: OLD_KEY, username: "Broken-GB-1.00", score: "100", extra: "yes", userGuid: "made-up-guid" };
+    const up = await upload(broken, fields);
+    const plainUp = await upload(off, fields);
+    const upIssued = await upload(broken, { ...fields, userGuid: guid });
+    const profileBody = { name: "Pat", email: "not-an-email", country: "US", consentAccepted: true };
+    const profile = await request(broken.base, { method: "POST", path: "/player-profile", body: profileBody });
+    const plainProfile = await request(off.base, { method: "POST", path: "/player-profile", body: profileBody });
+    const okProfile = await request(broken.base, { method: "POST", path: "/player-profile", body: { ...profileBody, email: `pat-${mode}@example.com` } });
+    const get = await getJson(broken.base, `/get?publicKey=${OLD_KEY}&userGuid=made-up-guid`);
+    for (let i = 0; i < 25; i++) await request(broken.base, { path: `/get?publicKey=${OLD_KEY}` });
+    const elapsed = Date.now() - started;
+
+    check(`${mode}: /authorize -> 200 GUID`, authz.status === 200 && UUID_RE.test(guid), authz.body);
+    check(`${mode}: upload -> identical to observe-off`, up.status === 200 && up.body === plainUp.body && up.status === plainUp.status && upIssued.status === 200, `status=${up.status}`);
+    check(`${mode}: /player-profile -> identical to observe-off`, profile.status === plainProfile.status && profile.body === plainProfile.body && okProfile.status === 200 && okProfile.body === '{"ok":true}', `${profile.status} ${profile.body}`);
+    check(`${mode}: /get -> 200 with the stored row`, get.status === 200 && get.json.some((row) => row.UserGuid === "made-up-guid" && row.Extra === "yes"), get.body);
+    check(`${mode}: all 31 requests answered promptly`, elapsed < 5000, `ms=${elapsed}`);
+    await settle(broken, 300);
+    const observer = broken.service.observer;
+    check(`${mode}: background queue stays bounded`, observer.queue.length <= 5 && observer.inFlight <= 2, `queue=${observer.queue.length} inFlight=${observer.inFlight}`);
+    check(`${mode}: nothing was stored, jobs were dropped or failed`, brokenStorage.observations.length === 0 && brokenStorage.issuedGuids.size === 0 && (mode === "hangObserve" ? observer.stats.dropped > 0 : observer.stats.writeErrors > 0), JSON.stringify(observer.stats));
+    const logged = errorLines.slice(errorsBefore);
+    check(`${mode}: failures are logged at most once per job type`, logged.every((l) => l.startsWith("[observe] ")) && logged.length <= 5 && (mode === "hangObserve" ? logged.length === 0 : logged.length >= 1), JSON.stringify(logged));
+    const flushed = await Promise.race([observer.flushTraffic().then(() => "resolved"), new Promise((resolve) => setTimeout(() => resolve("pending"), 300))]);
+    check(`${mode}: flush never throws`, mode === "failObserve" ? flushed === "resolved" : true, flushed);
+    const stopped = await Promise.race([observer.stop().then(() => "resolved"), new Promise((resolve) => setTimeout(() => resolve("pending"), 300))]);
+    check(`${mode}: counts survive a failed flush in bounded memory`, observer.pendingTraffic.size <= 5000 && (mode === "hangObserve" || (stopped === "resolved" && observer.pendingTraffic.size > 0)), `pending=${observer.pendingTraffic.size} ${stopped}`);
+    broken.server.close();
+  }
+
+  console.log("\n=== OBSERVE: admin read endpoints ===");
+  {
+    for (const urlPath of ["/admin/api/observations", "/admin/api/observation-summary"]) {
+      const noAuth = await request(obs.base, { path: urlPath });
+      const badAuth = await request(obs.base, { path: urlPath, headers: { Authorization: "Bearer nope" } });
+      check(`GET ${urlPath} requires admin auth`, noAuth.status === 401 && badAuth.status === 401, `${noAuth.status} ${badAuth.status}`);
+    }
+
+    const all = await getJson(obs.base, "/admin/api/observations", adminAuth);
+    check("GET /admin/api/observations -> 200 array, newest first", all.status === 200 && Array.isArray(all.json) && all.json.length > 10 && all.json.every((o, i) => i === 0 || all.json[i - 1].at > o.at || (all.json[i - 1].at === o.at && all.json[i - 1].id > o.id)), `len=${all.json && all.json.length}`);
+    check("observation rows have the documented fields", all.json.every((o) => Object.keys(o).join(",") === "id,at,route,reason,ip,ipSource,userAgent,keyPrefix,guidRef,detail" && typeof o.detail === "object" && o.keyPrefix.length <= 8 && o.userAgent.length <= 300), JSON.stringify(all.json[0]));
+    const byReason = await getJson(obs.base, "/admin/api/observations?reason=extra_unexpected", adminAuth);
+    check("reason filter", byReason.json.length === 2 && byReason.json.every((o) => o.reason === "extra_unexpected"), byReason.body);
+    const byRoute = await getJson(obs.base, "/admin/api/observations?route=/player-profile", adminAuth);
+    check("route filter", byRoute.json.length === 2 && byRoute.json.every((o) => o.route === "/player-profile"), byRoute.body);
+    const limited = await getJson(obs.base, "/admin/api/observations?limit=3", adminAuth);
+    const overLimit = await getJson(obs.base, "/admin/api/observations?limit=999999", adminAuth);
+    check("limit is honoured and capped", limited.json.length === 3 && limited.json[0].id === all.json[0].id && overLimit.status === 200 && overLimit.json.length === obsStorage.observations.length);
+    const future = await getJson(obs.base, `/admin/api/observations?since=${Math.floor(Date.now() / 1000) + 3600}`, adminAuth);
+    check("since filter", future.status === 200 && future.json.length === 0, future.body);
+
+    const summary = await getJson(obs.base, "/admin/api/observation-summary", adminAuth);
+    const s = summary.json;
+    check("GET /admin/api/observation-summary -> 200 with every section", summary.status === 200 && ["enabled", "since", "until", "expectedPublicKeys", "limits", "observations", "contract", "publicKeys", "uploads", "issuedGuids", "rate", "clientAddress", "observationTotals", "process"].every((key) => key in s), Object.keys(s || {}).join(","));
+    check("summary: counts grouped by reason and route", s.observations.some((o) => o.reason === "guid_not_issued" && o.route === "/entry/upload" && o.count === 4 && o.distinctIps === 1) && s.observations.some((o) => o.reason === "profile_fields" && o.route === "/player-profile" && o.count === 2), JSON.stringify(s.observations));
+    check("summary: public keys in use, by prefix", s.publicKeys.some((k) => k.keyPrefix === "536aec42" && k.expected === true && k.route === "/entry/upload" && k.count > 5) && s.publicKeys.some((k) => k.keyPrefix === "ff61800f" && k.expected === false && k.length === 64) && s.expectedPublicKeys[0].keyPrefix === "536aec42", JSON.stringify(s.publicKeys));
+    check("summary: share of uploads using a server-issued GUID", s.uploads.guidIssued === 13 && s.uploads.guidNotIssued === 4 && s.uploads.guidNotIssuedNewEntry === 3 && s.uploads.guidNotIssuedExistingEntry === 1 && s.uploads.issuedShare === 0.7647 && s.uploads.requests === 17, JSON.stringify(s.uploads));
+    check("summary: issued GUID counts by address source", s.issuedGuids.total === obsStorage.issuedGuids.size && s.issuedGuids.bySource[0].ipSource === "socket" && s.issuedGuids.bySource[0].distinctIps === 1, JSON.stringify(s.issuedGuids));
+    const uploadContract = s.contract["/entry/upload"];
+    check("summary: content types, unity versions, origins, statuses", uploadContract.requests === 17 && uploadContract.contentType.multipart === 17 && uploadContract.unityVersion["2022.3.10f1"] === 17 && uploadContract.origin["play.example.com"] === 1 && uploadContract.status["200"] === 16 && uploadContract.status["400"] === 1 && uploadContract.userAgent["UnityPlayer/2022.3.10f1"] === 17, JSON.stringify(uploadContract));
+    check("summary: whether /get carries userGuid", s.contract["/get"].userGuid["1"] === 1 && s.contract["/get"].userGuid["0"] === 3, JSON.stringify(s.contract["/get"].userGuid));
+    check("summary: username score relation and extra values", s.uploads.usernameScoreRelation.score_div_100 === 10 && s.uploads.usernameScoreRelation.raw_score === 3 && s.uploads.usernameScoreRelation.mismatch === 1 && s.uploads.usernameScoreRelation.shape_mismatch === 1 && s.uploads.extraValues['value:"yes"'] === 2 && s.uploads.extraValues.single_space === 15, JSON.stringify([s.uploads.usernameScoreRelation, s.uploads.extraValues]));
+    check("summary: observed score range", s.uploads.storedScoreRange.min === -5 && s.uploads.storedScoreRange.max === 999999999 && s.uploads.scoreShape.negative === 1 && s.uploads.scoreShape.not_integer === 2 && s.uploads.scoreShape.digits_3 > 3, JSON.stringify([s.uploads.storedScoreRange, s.uploads.scoreShape]));
+    check("summary: proposed rate limits with their trigger counts", s.rate.length === 4 && s.rate.every((r) => r.windowsTriggered === 0 && r.requestsOverLimit === 0 && r.requests > 0) && s.rate[0].limit === 30 && s.rate[0].windowSeconds === 600 && s.rate[3].limit === 10 && s.rate[3].windowSeconds === 3600, JSON.stringify(s.rate));
+    check("summary: client address sources", s.clientAddress["/get"].shapes["src=x-real-ip;xri=1;xff=2;xri_eq_xff=first;sock=loopback"] === 1 && s.clientAddress["/get"].distinctClientsPerHourSummed === 2, JSON.stringify(s.clientAddress["/get"]));
+    const hourly = await getJson(obs.base, "/admin/api/observation-summary?hourly=1", adminAuth);
+    check("summary: hourly rows on request", !("trafficHourly" in s) && Array.isArray(hourly.json.trafficHourly) && hourly.json.trafficHourly.every((row) => Object.keys(row).join(",") === "hour,route,dimKey,count"), JSON.stringify((hourly.json.trafficHourly || [])[0]));
+    const none = await getJson(obs.base, `/admin/api/observation-summary?since=${Math.floor(Date.now() / 1000) + 7200}`, adminAuth);
+    check("summary: since filter", none.status === 200 && none.json.observations.length === 0 && none.json.uploads.requests === 0 && none.json.uploads.issuedShare === null, none.body.slice(0, 200));
+
+    const offSummary = await getJson(off.base, "/admin/api/observation-summary", adminAuth);
+    check("summary on an observe-off server -> 200, enabled false, empty", offSummary.status === 200 && offSummary.json.enabled === false && offSummary.json.observations.length === 0 && offSummary.json.issuedGuids.total === 0, offSummary.body.slice(0, 200));
+
+    const summaryText = summary.body + all.body + hourly.body;
+    check("admin responses hold no full key or GUID", !summaryText.includes(LIVE_KEY) && !summaryText.includes(OLD_KEY) && usedGuids.every((g) => !summaryText.includes(g)));
+  }
+
+  console.log("\n=== OBSERVE: no credential in any row or log line ===");
+  {
+    const rowsText = JSON.stringify(obsStorage.observations) + JSON.stringify([...obsStorage.traffic.values()]);
+    const logText = observeLines.join("\n") + errorLines.join("\n");
+    check("[observe] lines were emitted, one per stored row on the main server", observeLines.length > 20 && obsStorage.observations.every((o) => observeLines.some((l) => l.includes(`"reason":"${o.reason}"`) && l.includes(`"at":${o.at}`))));
+    check("no full public key in rows or [observe] lines", ![LIVE_KEY, OLD_KEY, PUBLIC_KEY].some((key) => rowsText.includes(key) || logText.includes(key)));
+    check("no full GUID in rows or [observe] lines", usedGuids.length > 15 && usedGuids.every((g) => !rowsText.includes(g) && !logText.includes(g)) && !rowsText.includes("typed-by-hand") && !logText.includes("typed-by-hand") && !logText.includes("made-up-guid") && !logText.includes("guid-1"));
+    check("every guid_ref is a 32-char mask or empty", obsStorage.observations.every((o) => o.guidRef === "" || MASK_PATTERN.test(o.guidRef)));
+    check("every stored field is within its limit", obsStorage.observations.every((o) => o.detail.length <= 1000 && o.userAgent.length <= 300 && o.ip.length <= 64 && o.keyPrefix.length <= 8));
+  }
+
+  obs.server.close();
+  off.server.close();
+
+  check("no unexpected server errors were logged", errorLines.every((l) => /Entry history write failed/.test(l) || l.startsWith("[observe] ")), JSON.stringify(errorLines));
 
   server.close();
 

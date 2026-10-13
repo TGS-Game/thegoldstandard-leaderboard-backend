@@ -30,6 +30,8 @@ Your Unity gameplay/UI scripts do not need leaderboard logic changes. The only U
 - Additional player onboarding storage: `player_profiles` table in the same database
 - Audit trail: `entry_history` table in the same database (created automatically
   on start; one row per entry change, see "Entry History")
+- Observe mode: `issued_guids`, `security_observations` and `traffic_hourly`
+  tables in the same database (created automatically, see "Observe Mode")
 
 If `DATABASE_URL` is set, the service uses Postgres. Otherwise it uses SQLite.
 
@@ -65,6 +67,15 @@ http://localhost:8787
   random per-process key (masks then change on every restart).
 - `MAX_USERNAME_LENGTH`: Default `127`.
 - `MAX_EXTRA_LENGTH`: Default `100`.
+- `SECURITY_OBSERVE`: Optional. Default on; `off` stops all observe-mode writes.
+- `OBSERVE_EXPECTED_PUBLIC_KEYS`: Optional comma-separated keys treated as
+  expected. Default: the shipped game's key. Other keys are recorded, not blocked.
+- `OBSERVE_MAX_SCORE`: Default `100000000`. `OBSERVE_MAX_USERNAME_LENGTH`: Default `60`.
+- `OBSERVE_RATE_AUTHORIZE` (`30/600`), `OBSERVE_RATE_UPLOAD` (`20/600`),
+  `OBSERVE_RATE_UPLOAD_GUID` (`5/600`), `OBSERVE_RATE_PROFILE` (`10/3600`):
+  proposed limits as `<requests>/<window seconds>`. Recorded, never enforced.
+- `OBSERVE_MAX_ROWS_PER_HOUR`: Default `500` observation rows per reason per hour.
+- `OBSERVE_MAX_ISSUED_PER_HOUR`: Default `2000` issued GUID rows per hour.
 
 ## Health Check
 
@@ -142,6 +153,8 @@ If `ADMIN_TOKEN` is set, the backend exposes:
 - `PUT /admin/api/entries/:publicKey/:userGuid`
 - `DELETE /admin/api/entries/:publicKey/:userGuid`
 - `GET /admin/api/entry-history?publicKey=...&userGuid=...&limit=...`
+- `GET /admin/api/observations?reason=...&route=...&since=...&limit=...`
+- `GET /admin/api/observation-summary?since=...`
 
 Authenticate with either:
 
@@ -196,6 +209,29 @@ changes can be reviewed and put back by hand. Read it with
 `GET /admin/api/entry-history` (admin auth; newest first; optional `publicKey`
 and `userGuid` filters; `limit` default `100`, max `500`). History is
 best-effort: a failed history write is logged and never fails the request.
+
+## Observe Mode
+
+Log-only security telemetry for the game-facing routes. It never rejects,
+delays or changes a request: everything runs after the response has been sent,
+and a failed or slow write is dropped. `SECURITY_OBSERVE=off` turns it off.
+
+- `issued_guids`: every GUID handed out by `GET /authorize` (kept 90 days).
+- `security_observations`: one row per finding, also printed as an
+  `[observe]` log line. Reasons: `unexpected_public_key`, `guid_not_issued`,
+  `guid_shape`, `score_out_of_bounds`, `username_shape`, `username_too_long`,
+  `extra_unexpected`, `profile_fields`, `would_rate_limit` (one per client per
+  window) and `observations_suppressed` (the hourly cap for a reason was hit).
+  Rows never hold a full GUID or public key: `guid_ref` is the same masked
+  token `GET /get` returns, `key_prefix` is the first 8 characters.
+- `traffic_hourly`: hourly counts of what clients send (content type, origin,
+  Unity version, user agent family, `userGuid` presence, status, client address
+  source), flushed every 5 minutes and on shutdown.
+
+Read them with `GET /admin/api/observations` (admin auth; newest first;
+optional `reason`, `route`, `since` filters; `limit` default `100`, max `1000`)
+and `GET /admin/api/observation-summary` (default period: the last 7 days;
+`since` is unix seconds or an ISO date; add `hourly=1` for the raw hourly rows).
 
 ## Public Key Behavior
 
