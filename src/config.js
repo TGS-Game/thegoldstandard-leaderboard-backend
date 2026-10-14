@@ -45,6 +45,9 @@ module.exports = {
   sessionSecret: process.env.SESSION_SECRET || "",
   // Signed-in session lifetime. 12 hours by default.
   sessionTtlSeconds: parsePositiveInt(process.env.SESSION_TTL_SECONDS, 43200),
+  // DIRECT_ADMIN_LOGIN=off switches off the password login form, so the hub's
+  // /sso is the only way in for a person. ADMIN_TOKEN header auth is unaffected.
+  directAdminLogin: parseSwitch(process.env.DIRECT_ADMIN_LOGIN),
   // Hub single sign-on: short-lived HS256 JWT, aud "leaderboard".
   ssoSecret: process.env.LEADERBOARD_SSO_SECRET || "",
   ssoAudience: process.env.LEADERBOARD_SSO_AUDIENCE || "leaderboard",

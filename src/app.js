@@ -9,6 +9,21 @@ const auth = require("./auth");
 const MAX_META_IP_LENGTH = 200;
 const MAX_META_USER_AGENT_LENGTH = 300;
 
+// Shown instead of the password login form when DIRECT_ADMIN_LOGIN is off.
+const ADMIN_HUB_URL = "https://admin.thegoldstandard.com";
+const HUB_SIGN_IN_PAGE = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TGS Leaderboard</title>
+</head>
+<body style="font-family: system-ui, sans-serif; padding: 40px 24px; text-align: center;">
+  <p>Sign in through the admin hub at <a href="${ADMIN_HUB_URL}" target="_top" rel="noopener">${ADMIN_HUB_URL}</a></p>
+</body>
+</html>
+`;
+
 // Request metadata for the entry history and the denial log. Read from the raw
 // headers/socket so `trust proxy` stays untouched. The x-forwarded-for value is
 // client-controlled except for its tail (appended by the platform proxy), so
@@ -154,11 +169,15 @@ function createApp(service, config) {
   const ssoEnabled = Boolean(config.ssoSecret && config.sessionSecret);
   const tokenEnabled = Boolean(config.adminToken);
   const adminEnabled = sessionEnabled || ssoEnabled || tokenEnabled;
+  // DIRECT_ADMIN_LOGIN switch. Only an explicit off value turns it off; a config
+  // without the field behaves as on.
+  const directLoginEnabled = config.directAdminLogin !== false;
 
   // In-memory one-time-use tracker for SSO jti values (self-pruning).
   const seenJti = new auth.SeenJtiStore();
 
-  // True when the request carries a valid signed session cookie.
+  // True when the request carries a valid signed session cookie. With direct
+  // login switched off only sessions created by /sso count.
   function hasValidSession(req) {
     if (!sessionEnabled && !ssoEnabled) {
       return false;
@@ -168,7 +187,10 @@ function createApp(service, config) {
       config.sessionSecret,
       nowUnixSeconds()
     );
-    return Boolean(session);
+    if (!session) {
+      return false;
+    }
+    return directLoginEnabled || session.via === "sso";
   }
 
   // True when the request carries the admin token via Bearer or X-Admin-Token.
@@ -221,13 +243,19 @@ function createApp(service, config) {
     res.setHeader("Content-Security-Policy", `frame-ancestors ${frameAncestors}`);
   }
 
-  function setSessionCookie(res) {
+  function setSessionCookie(res, via) {
     const { cookie } = auth.buildSessionCookie(
       config.sessionSecret,
       config.sessionTtlSeconds,
-      nowUnixSeconds()
+      nowUnixSeconds(),
+      via
     );
     res.append("Set-Cookie", cookie);
+  }
+
+  function sendHubSignInPage(res) {
+    setAdminPageHeaders(res);
+    res.status(403).type("html").send(HUB_SIGN_IN_PAGE);
   }
 
   if (adminEnabled) {
@@ -235,7 +263,20 @@ function createApp(service, config) {
     const loginFormParser = express.urlencoded({ extended: false });
 
     // --- Session login (the only open admin route) -------------------------
-    if (sessionEnabled) {
+    if (!directLoginEnabled) {
+      // Direct login switched off: no form, and the POST never reads the body.
+      app.get("/admin/login", (req, res) => {
+        if (hasValidSession(req)) {
+          res.redirect(302, "/admin");
+          return;
+        }
+        sendHubSignInPage(res);
+      });
+
+      app.post("/admin/login", (_req, res) => {
+        sendHubSignInPage(res);
+      });
+    } else if (sessionEnabled) {
       app.get("/admin/login", (req, res) => {
         // Already signed in? Skip straight to the panel.
         if (hasValidSession(req)) {
@@ -253,10 +294,12 @@ function createApp(service, config) {
           res.redirect(302, "/admin/login?error=1");
           return;
         }
-        setSessionCookie(res);
+        setSessionCookie(res, "password");
         res.redirect(302, "/admin");
       });
+    }
 
+    if (sessionEnabled) {
       app.post("/admin/logout", (_req, res) => {
         res.append("Set-Cookie", auth.buildClearSessionCookie());
         res.redirect(302, "/admin/login");
@@ -292,7 +335,7 @@ function createApp(service, config) {
             return;
           }
 
-          setSessionCookie(res);
+          setSessionCookie(res, "sso");
           res.redirect(302, "/admin");
         } catch (error) {
           // Do not surface or log token contents.
@@ -305,7 +348,7 @@ function createApp(service, config) {
     app.get("/admin", (req, res) => {
       setAdminPageHeaders(res);
       if (!isAdminAuthorized(req)) {
-        if (sessionEnabled) {
+        if (sessionEnabled || !directLoginEnabled) {
           res.redirect(302, "/admin/login");
         } else {
           res.status(401).type("text/plain").send("Unauthorized.");

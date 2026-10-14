@@ -1,6 +1,7 @@
 // Deterministic local test suite, run over real HTTPS with a self-signed cert.
 // Covers: game-endpoint regression, /health, password login, SSO
 // (valid/expired/replay/tampered/alg:none/wrong-aud), token auth in parallel,
+// the DIRECT_ADMIN_LOGIN switch (on and off, and what off must never touch),
 // cookie attributes (HttpOnly; Secure; SameSite=None; Partitioned), and the
 // rule that CSP frame-ancestors is set on admin pages only. Stage 1 security:
 // GUID masking in /get, admin-only /entry/delete + /entry/update-username, the
@@ -16,6 +17,7 @@ const https = require("https");
 const crypto = require("crypto");
 
 const { createApp } = require("../src/app");
+const auth = require("../src/auth");
 const { LeaderboardService } = require("../src/service");
 const { FakeStorage } = require("./fake-storage");
 
@@ -414,6 +416,163 @@ async function main() {
 
     const wrongSecret = await request(base, { path: `/sso?token=${mintJwt({ secret: "attacker-secret", jti: "jti-secret" })}` });
     check("wrong signing secret -> 401", wrongSecret.status === 401, `status=${wrongSecret.status}`);
+  }
+
+  console.log("\n=== DIRECT_ADMIN_LOGIN switch ===");
+  {
+    const HUB_URL = "https://admin.thegoldstandard.com";
+    const isHubPage = (r) => r.body.includes("Sign in through the admin hub") && r.body.includes(`href="${HUB_URL}"`);
+    const nowSec = Math.floor(Date.now() / 1000);
+    // A session signed before the `via` marker existed (no marker at all).
+    const legacyCookie = `tgs_admin_session=${auth.signSession({ sub: "admin", iat: nowSec, exp: nowSec + 600 }, SESSION_SECRET)}`;
+    const loginBody = `password=${encodeURIComponent(ADMIN_PASSWORD)}`;
+    const formHeaders = { "Content-Type": "application/x-www-form-urlencoded" };
+
+    // --- switch parsing: only a clear "off" value turns it off ---
+    const savedEnv = process.env.DIRECT_ADMIN_LOGIN;
+    const configPath = require.resolve("../src/config");
+    const readSwitch = (value) => {
+      if (value === undefined) {
+        delete process.env.DIRECT_ADMIN_LOGIN;
+      } else {
+        process.env.DIRECT_ADMIN_LOGIN = value;
+      }
+      delete require.cache[configPath];
+      return require("../src/config").directAdminLogin;
+    };
+    check("DIRECT_ADMIN_LOGIN unset -> on", readSwitch(undefined) === true);
+    for (const value of ["", "on", "true", "1", "yes", "banana"]) {
+      check(`DIRECT_ADMIN_LOGIN=${JSON.stringify(value)} -> on`, readSwitch(value) === true);
+    }
+    for (const value of ["off", "OFF", "false", "False", "0", "no", " No "]) {
+      check(`DIRECT_ADMIN_LOGIN=${JSON.stringify(value)} -> off`, readSwitch(value) === false);
+    }
+    readSwitch(savedEnv);
+    delete require.cache[configPath];
+
+    // --- ON (the default server above has no directAdminLogin field) ---
+    const login = await request(base, { method: "POST", path: "/admin/login", headers: formHeaders, body: loginBody });
+    const directCookie = sessionCookiePair(login.setCookie);
+    check("ON: password login still issues a session", login.status === 302 && login.headers.location === "/admin" && Boolean(directCookie), `status=${login.status}`);
+    const directPayload = auth.verifySession(directCookie.split("=")[1], SESSION_SECRET, nowSec - 5);
+    check("ON: password session is marked via=password", directPayload && directPayload.via === "password", JSON.stringify(directPayload));
+    const onDirect = await request(base, { path: "/admin/api/public-keys", cookie: directCookie });
+    check("ON: password session reaches /admin/api -> 200", onDirect.status === 200, `status=${onDirect.status}`);
+    const onLegacy = await request(base, { path: "/admin/api/public-keys", cookie: legacyCookie });
+    check("ON: unmarked (pre-deploy) session still works -> 200", onLegacy.status === 200, `status=${onLegacy.status}`);
+
+    const explicitOn = await startServer({ ...testConfig, directAdminLogin: true }, new FakeStorage());
+    const onForm = await request(explicitOn.base, { path: "/admin/login" });
+    check("ON (explicit): GET /admin/login -> 200 password form", onForm.status === 200 && /name="password"/.test(onForm.body) && !isHubPage(onForm), `status=${onForm.status}`);
+    const onPost = await request(explicitOn.base, { method: "POST", path: "/admin/login", headers: formHeaders, body: loginBody });
+    check("ON (explicit): POST /admin/login correct pw -> 302 /admin + cookie", onPost.status === 302 && onPost.headers.location === "/admin" && Boolean(sessionCookiePair(onPost.setCookie)), `status=${onPost.status}`);
+    explicitOn.server.close();
+
+    // --- OFF ---
+    const off = await startServer({ ...testConfig, directAdminLogin: false }, new FakeStorage());
+
+    const offForm = await request(off.base, { path: "/admin/login" });
+    check("OFF: GET /admin/login -> 403 hub page, no form", offForm.status === 403 && isHubPage(offForm) && !/<form|password/i.test(offForm.body), `status=${offForm.status}`);
+    check("OFF: hub page keeps CSP frame-ancestors", offForm.headers["content-security-policy"] === `frame-ancestors ${HUB_ORIGIN}`, offForm.headers["content-security-policy"]);
+
+    const offPost = await request(off.base, { method: "POST", path: "/admin/login", headers: formHeaders, body: loginBody });
+    check("OFF: POST /admin/login correct pw -> 403 hub page", offPost.status === 403 && isHubPage(offPost), `status=${offPost.status} loc=${offPost.headers.location}`);
+    check("OFF: POST /admin/login sets NO cookie", offPost.setCookie.length === 0, JSON.stringify(offPost.setCookie));
+    const offWrong = await request(off.base, { method: "POST", path: "/admin/login", headers: formHeaders, body: "password=wrong" });
+    check("OFF: wrong pw answers exactly like correct pw (credentials not read)", offWrong.status === offPost.status && offWrong.body === offPost.body && offWrong.headers.location === undefined, `status=${offWrong.status}`);
+
+    const offAdmin = await request(off.base, { path: "/admin" });
+    check("OFF: GET /admin without session -> 302 /admin/login", offAdmin.status === 302 && offAdmin.headers.location === "/admin/login", `status=${offAdmin.status}`);
+
+    for (const [label, cookie] of [["password", directCookie], ["unmarked", legacyCookie]]) {
+      const api = await request(off.base, { path: "/admin/api/public-keys", cookie });
+      check(`OFF: ${label} session on /admin/api -> 401`, api.status === 401, `status=${api.status}`);
+      const write = await request(off.base, { method: "POST", path: "/admin/api/entries", cookie, body: { publicKey: PUBLIC_KEY, userGuid: "off-guid", username: "nope", score: 1 } });
+      check(`OFF: ${label} session cannot write -> 401`, write.status === 401, `status=${write.status}`);
+      const page = await request(off.base, { path: "/admin", cookie });
+      check(`OFF: ${label} session on /admin -> 302 /admin/login`, page.status === 302 && page.headers.location === "/admin/login", `status=${page.status}`);
+      const form = await request(off.base, { path: "/admin/login", cookie });
+      check(`OFF: ${label} session on /admin/login -> 403 hub page`, form.status === 403 && isHubPage(form), `status=${form.status}`);
+    }
+
+    // SSO keeps working and its session is accepted.
+    const sso = await request(off.base, { path: `/sso?token=${mintJwt({ jti: "jti-off-1" })}` });
+    const offSsoCookie = sessionCookiePair(sso.setCookie);
+    check("OFF: valid /sso -> 302 /admin + cookie", sso.status === 302 && sso.headers.location === "/admin" && Boolean(offSsoCookie), `status=${sso.status}`);
+    const ssoPayload = auth.verifySession(offSsoCookie.split("=")[1], SESSION_SECRET, nowSec - 5);
+    check("OFF: SSO session is marked via=sso", ssoPayload && ssoPayload.via === "sso", JSON.stringify(ssoPayload));
+    const ssoPage = await request(off.base, { path: "/admin", cookie: offSsoCookie });
+    check("OFF: SSO session on /admin -> 200 panel", ssoPage.status === 200 && /TGS Leaderboard/.test(ssoPage.body), `status=${ssoPage.status}`);
+    const ssoApi = await request(off.base, { path: "/admin/api/public-keys", cookie: offSsoCookie });
+    check("OFF: SSO session on /admin/api -> 200", ssoApi.status === 200, `status=${ssoApi.status}`);
+    const ssoWrite = await request(off.base, { method: "POST", path: "/admin/api/entries", cookie: offSsoCookie, body: { publicKey: PUBLIC_KEY, userGuid: "sso-guid", username: "SsoMade", score: 7 } });
+    check("OFF: SSO session can write via /admin/api -> 200", ssoWrite.status === 200, `status=${ssoWrite.status} body=${ssoWrite.body}`);
+    const ssoLogin = await request(off.base, { path: "/admin/login", cookie: offSsoCookie });
+    check("OFF: SSO session on /admin/login -> 302 /admin", ssoLogin.status === 302 && ssoLogin.headers.location === "/admin", `status=${ssoLogin.status}`);
+    const ssoBad = await request(off.base, { path: `/sso?token=${mintJwt({ sign: false, jti: "jti-off-bad" })}` });
+    check("OFF: tampered /sso still -> 401", ssoBad.status === 401, `status=${ssoBad.status}`);
+    const onSso = await request(base, { path: `/sso?token=${mintJwt({ jti: "jti-on-then-off" })}` });
+    const onSsoOnOff = await request(off.base, { path: "/admin/api/public-keys", cookie: sessionCookiePair(onSso.setCookie) });
+    check("OFF: SSO session issued while ON is accepted after switching OFF", onSsoOnOff.status === 200, `status=${onSsoOnOff.status}`);
+
+    // ADMIN_TOKEN header (machine API) is untouched.
+    const tokenHeaders = { Authorization: `Bearer ${ADMIN_TOKEN}` };
+    const offBearer = await request(off.base, { path: "/admin/api/public-keys", headers: tokenHeaders });
+    check("OFF: Bearer token on /admin/api -> 200", offBearer.status === 200, `status=${offBearer.status}`);
+    const offX = await request(off.base, { path: `/admin/api/entries?publicKey=${PUBLIC_KEY}`, headers: { "X-Admin-Token": ADMIN_TOKEN } });
+    check("OFF: X-Admin-Token on /admin/api -> 200", offX.status === 200, `status=${offX.status}`);
+    const offTokenWrite = await request(off.base, { method: "POST", path: "/admin/api/entries", headers: tokenHeaders, body: { publicKey: PUBLIC_KEY, userGuid: "tok-guid", username: "TokMade", score: 9 } });
+    check("OFF: token write via /admin/api -> 200", offTokenWrite.status === 200, `status=${offTokenWrite.status} body=${offTokenWrite.body}`);
+    const offTokenPage = await request(off.base, { path: "/admin", headers: tokenHeaders });
+    check("OFF: token on GET /admin -> 200 panel", offTokenPage.status === 200, `status=${offTokenPage.status}`);
+    const offTokenWithDirect = await request(off.base, { path: "/admin/api/public-keys", headers: tokenHeaders, cookie: directCookie });
+    check("OFF: token + refused password cookie -> still 200", offTokenWithDirect.status === 200, `status=${offTokenWithDirect.status}`);
+    const offBadTok = await request(off.base, { path: "/admin/api/public-keys", headers: { Authorization: "Bearer nope" } });
+    check("OFF: wrong token -> 401", offBadTok.status === 401, `status=${offBadTok.status}`);
+    const offRenameForm = multipartForm({ publicKey: PUBLIC_KEY, username: "TokRenamed", userGuid: "tok-guid" });
+    const offRename = await request(off.base, { method: "POST", path: "/entry/update-username", headers: { ...offRenameForm.headers, ...tokenHeaders }, body: offRenameForm.body });
+    check("OFF: token rename via /entry/update-username -> 200", offRename.status === 200, `status=${offRename.status} body=${offRename.body}`);
+    const offCookieRename = await request(off.base, { method: "POST", path: "/entry/update-username", cookie: offSsoCookie, ...multipartForm({ publicKey: PUBLIC_KEY, username: "CookieRenamed", userGuid: "tok-guid" }) });
+    check("OFF: /entry/update-username with session cookie only -> 403 (as with ON)", offCookieRename.status === 403, `status=${offCookieRename.status}`);
+    const offDeleteForm = multipartForm({ publicKey: PUBLIC_KEY, userGuid: "tok-guid" });
+    const offDelete = await request(off.base, { method: "POST", path: "/entry/delete", headers: { ...offDeleteForm.headers, ...tokenHeaders }, body: offDeleteForm.body });
+    check("OFF: token delete via /entry/delete -> 200", offDelete.status === 200, `status=${offDelete.status} body=${offDelete.body}`);
+
+    // Game routes and health are untouched.
+    const offHealth = await request(off.base, { path: "/health" });
+    check("OFF: GET /health -> 200 ok", offHealth.status === 200 && JSON.parse(offHealth.body).status === "ok", `status=${offHealth.status}`);
+    const offRoot = await request(off.base, { path: "/" });
+    check("OFF: GET / -> 200 OK", offRoot.status === 200 && offRoot.body === "OK", `status=${offRoot.status}`);
+    const offAuthorize = await request(off.base, { path: "/authorize" });
+    const offGuid = offAuthorize.body.trim();
+    check("OFF: GET /authorize -> 200 guid", offAuthorize.status === 200 && UUID_RE.test(offGuid), offAuthorize.body);
+    const offUpload = await request(off.base, { method: "POST", path: "/entry/upload", ...multipartForm({ publicKey: PUBLIC_KEY, username: "OffPlayer", score: "321", extra: " ", userGuid: offGuid }) });
+    check("OFF: POST /entry/upload -> 200", offUpload.status === 200 && offUpload.body === "OK", `status=${offUpload.status} body=${offUpload.body}`);
+    const offGet = await getJson(off.base, `/get?publicKey=${PUBLIC_KEY}&userGuid=${offGuid}&isInAscendingOrder=0&skip=0&take=100&timePeriod=0`);
+    check("OFF: GET /get returns the uploaded row", offGet.status === 200 && (offGet.json || []).some((row) => row.Username === "OffPlayer" && row.Score === 321), offGet.body);
+    const offPersonal = await getJson(off.base, `/entry/get?publicKey=${PUBLIC_KEY}&userGuid=${offGuid}`);
+    check("OFF: GET /entry/get -> 200 own entry", offPersonal.status === 200 && offPersonal.json && offPersonal.json.Username === "OffPlayer", offPersonal.body);
+    const offCount = await request(off.base, { path: `/entry/count?publicKey=${PUBLIC_KEY}` });
+    check("OFF: GET /entry/count -> 200", offCount.status === 200 && Number(offCount.body) >= 1, `status=${offCount.status} body=${offCount.body}`);
+    const profileFields = { name: "Off Player", email: "off-player@example.com", country: "GB", consentAccepted: "true" };
+    const offProfile = await request(off.base, { method: "POST", path: "/player-profile", ...multipartForm(profileFields) });
+    const onProfile = await request(base, { method: "POST", path: "/player-profile", ...multipartForm(profileFields) });
+    check("OFF: POST /player-profile answers exactly as with ON", offProfile.status === onProfile.status && offProfile.body === onProfile.body, `off=${offProfile.status} ${offProfile.body} on=${onProfile.status} ${onProfile.body}`);
+    check("OFF: game routes carry no CSP header", offGet.headers["content-security-policy"] === undefined && offHealth.headers["content-security-policy"] === undefined);
+
+    // Logout still just clears the cookie.
+    const offLogout = await request(off.base, { method: "POST", path: "/admin/logout", cookie: offSsoCookie });
+    check("OFF: POST /admin/logout -> 302 /admin/login, cookie cleared", offLogout.status === 302 && offLogout.headers.location === "/admin/login" && /Max-Age=0/i.test(offLogout.setCookie.join(";")), `status=${offLogout.status}`);
+    off.server.close();
+
+    // OFF with no ADMIN_PASSWORD at all (SSO + token only).
+    const offNoPw = await startServer({ ...testConfig, adminPassword: "", directAdminLogin: false }, new FakeStorage());
+    const noPwForm = await request(offNoPw.base, { path: "/admin/login" });
+    check("OFF, no password set: GET /admin/login -> 403 hub page", noPwForm.status === 403 && isHubPage(noPwForm), `status=${noPwForm.status}`);
+    const noPwSso = await request(offNoPw.base, { path: `/sso?token=${mintJwt({ jti: "jti-off-nopw" })}` });
+    const noPwApi = await request(offNoPw.base, { path: "/admin/api/public-keys", cookie: sessionCookiePair(noPwSso.setCookie) });
+    check("OFF, no password set: SSO session works -> 200", noPwSso.status === 302 && noPwApi.status === 200, `sso=${noPwSso.status} api=${noPwApi.status}`);
+    offNoPw.server.close();
   }
 
   console.log("\n=== UNITY MULTIPART UPLOAD (exact client shape) ===");

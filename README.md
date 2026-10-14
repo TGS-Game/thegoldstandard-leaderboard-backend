@@ -59,6 +59,8 @@ http://localhost:8787
 - `ADMIN_PASSWORD`: Enables password session login for `/admin`.
 - `SESSION_SECRET`: Secret used to sign the admin session cookie. Required for session login and SSO.
 - `SESSION_TTL_SECONDS`: Session lifetime. Default `43200` (12h).
+- `DIRECT_ADMIN_LOGIN`: Optional. Default on; `off` (or `false`/`0`/`no`) switches
+  off the password login so the hub's `/sso` is the only way in for a person.
 - `LEADERBOARD_SSO_SECRET`: Shared secret for hub single sign-on (HS256 JWT).
 - `LEADERBOARD_SSO_AUDIENCE`: Expected JWT `aud`. Default `leaderboard`.
 - `HUB_ORIGIN`: Origin allowed to embed `/admin` in an iframe (CSP `frame-ancestors`).
@@ -94,6 +96,13 @@ The admin panel and API accept **either** of these, in parallel:
 The session cookie is `HttpOnly; Secure; SameSite=None; Partitioned` so the panel
 works embedded in the hub iframe (including mobile). `GET /admin/login` is the
 only open admin route; everything else under `/admin` requires auth.
+
+Setting `DIRECT_ADMIN_LOGIN=off` switches the password login off: `GET` and
+`POST /admin/login` answer `403` with a "sign in through the admin hub" page (the
+POST never reads the password), and only sessions created by `/sso` are accepted.
+Password sessions, and any session issued before this switch existed, stop
+working until the admin signs in again through the hub. `ADMIN_TOKEN` header
+auth, `/sso`, `/health` and the game endpoints are unaffected.
 
 ### Hub single sign-on (`GET /sso`)
 

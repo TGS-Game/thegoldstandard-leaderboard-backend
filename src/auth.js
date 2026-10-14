@@ -75,13 +75,17 @@ function verifySession(token, secret, nowSeconds) {
 
 // Build a session token + the matching Set-Cookie header value. The cookie is
 // iframe-ready: SameSite=None requires Secure, and Partitioned (CHIPS) keeps it
-// working in third-party iframe contexts, including mobile browsers.
-function buildSessionCookie(secret, ttlSeconds, nowSeconds) {
+// working in third-party iframe contexts, including mobile browsers. `via`
+// records how the session was created ("sso" or "password").
+function buildSessionCookie(secret, ttlSeconds, nowSeconds, via) {
   const payload = {
     sub: "admin",
     iat: nowSeconds,
     exp: nowSeconds + ttlSeconds
   };
+  if (via) {
+    payload.via = via;
+  }
   const value = signSession(payload, secret);
   const cookie = [
     `${SESSION_COOKIE_NAME}=${value}`,
