@@ -253,6 +253,10 @@ The built-in admin page prompts for the token and lets you load public keys, ins
 - `GET /entry/count` returns a plain text integer.
 - Write routes return HTTP `200` on success. The body is not significant to the Unity package.
 - `POST /player-profile` accepts `name`, `email`, `country`, `consentAccepted`, and optional `userGuid`.
+  A new email creates a profile. An email that already has one is only
+  overwritten when the request carries that profile's stored `userGuid`;
+  otherwise only a consent withdrawal is applied and nothing else changes (no
+  onboarding call either). The answer is always `200 {"ok":true}`.
 
 ## Entry History
 

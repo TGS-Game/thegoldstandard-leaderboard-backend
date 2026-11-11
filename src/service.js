@@ -333,6 +333,23 @@ class LeaderboardService {
     const timestamp = nowUnixSeconds();
     const existing = await this.storage.getPlayerProfileByEmail(email);
 
+    // Anyone can post any email here, so an existing profile is only
+    // overwritten with proof: the userGuid stored on it (the /authorize GUID
+    // the game sent when that player registered). Without proof the stored
+    // name, country and GUID are kept and nothing goes to the onboarding
+    // bridge. The one exception is withdrawing consent, which is always
+    // honoured. The answer is the same {ok:true} either way, so this route
+    // cannot be used to find out which emails are registered.
+    if (existing && !(userGuid && existing.userGuid && userGuid === existing.userGuid)) {
+      if (existing.consentAccepted && !consentAccepted) {
+        await this.storage.upsertPlayerProfile({ ...existing, consentAccepted: false, updatedAt: timestamp });
+        console.warn("[profile] existing profile: consent withdrawn (no proof needed); name and country kept.");
+      } else {
+        console.warn("[profile] existing profile kept: submission without the profile's userGuid was ignored.");
+      }
+      return;
+    }
+
     await this.storage.upsertPlayerProfile({
       id: existing ? existing.id : crypto.randomUUID(),
       name,
