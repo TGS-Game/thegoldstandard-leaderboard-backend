@@ -88,6 +88,143 @@ class PostgresStorage {
     await this.initializeEntryHistory();
     await this.initializeObservation();
     await this.initializeUploadSessions();
+    await this.initializeOnboardingOutbox();
+  }
+
+  // Outbox for sign-ups on their way to onboarding-bridge, and the alert
+  // state that keeps Slack alerts to one per problem across restarts. Only
+  // NEW tables. Unlike the observe tables this one is not optional: a failure
+  // here stops the boot, because without it new sign-ups could not be kept.
+  async initializeOnboardingOutbox() {
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS onboarding_outbox (
+        id BIGSERIAL PRIMARY KEY,
+        email TEXT NOT NULL UNIQUE,
+        idempotency_key TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        status TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        created_at BIGINT NOT NULL,
+        deadline_at BIGINT NOT NULL,
+        next_attempt_at BIGINT NOT NULL,
+        locked_until BIGINT NOT NULL DEFAULT 0,
+        last_error TEXT NOT NULL DEFAULT '',
+        sent_at BIGINT
+      );
+    `);
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_onboarding_outbox_status_next ON onboarding_outbox(status, next_attempt_at);
+    `);
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS alert_state (
+        key TEXT PRIMARY KEY,
+        since BIGINT NOT NULL,
+        alerted_at BIGINT
+      );
+    `);
+  }
+
+  // "queued" for a new email, "duplicate" when this email already has a row.
+  async enqueueOnboarding(row) {
+    const result = await this.pool.query(`
+      INSERT INTO onboarding_outbox (
+        email, idempotency_key, payload, status, created_at, deadline_at, next_attempt_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $5)
+      ON CONFLICT (email) DO NOTHING
+      RETURNING id
+    `, [row.email, row.idempotencyKey, row.payload, row.status, row.createdAt, row.deadlineAt]);
+    return result.rowCount === 1 ? "queued" : "duplicate";
+  }
+
+  // Due pending rows, leased for leaseSeconds so no one else picks them up.
+  async claimDueOnboarding(now, limit, leaseSeconds) {
+    const result = await this.pool.query(`
+      UPDATE onboarding_outbox SET locked_until = $1 + $3
+      WHERE id IN (
+        SELECT id FROM onboarding_outbox
+        WHERE status = 'pending' AND next_attempt_at <= $1 AND locked_until <= $1
+        ORDER BY next_attempt_at ASC, id ASC
+        LIMIT $2
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING id, idempotency_key, payload, attempts, created_at, deadline_at
+    `, [now, limit, leaseSeconds]);
+    return result.rows.map((row) => ({
+      id: Number(row.id),
+      idempotencyKey: row.idempotency_key,
+      payload: row.payload,
+      attempts: Number(row.attempts),
+      createdAt: Number(row.created_at),
+      deadlineAt: Number(row.deadline_at)
+    }));
+  }
+
+  // Delivered: the personal data is no longer needed here (player_profiles
+  // keeps the profile); the row stays so the email is never sent twice.
+  async markOnboardingSent(id, now) {
+    await this.pool.query(`
+      UPDATE onboarding_outbox
+      SET status = 'sent', sent_at = $2, payload = '{}', locked_until = 0, attempts = attempts + 1, last_error = ''
+      WHERE id = $1
+    `, [id, now]);
+  }
+
+  async markOnboardingRetry(id, { attempts, lastError, failed, nextAttemptAt }) {
+    await this.pool.query(`
+      UPDATE onboarding_outbox
+      SET attempts = $2, last_error = $3, status = $4, next_attempt_at = $5, locked_until = 0
+      WHERE id = $1
+    `, [id, attempts, String(lastError).slice(0, 200), failed ? "failed" : "pending", nextAttemptAt]);
+  }
+
+  // Sign-ups created before `cutoff` that have not reached the bridge.
+  async onboardingBacklog(cutoff) {
+    const result = await this.pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE status IN ('pending', 'failed') AND created_at <= $1) AS waiting,
+        COUNT(*) FILTER (WHERE status = 'failed') AS failed,
+        (SELECT last_error FROM onboarding_outbox
+          WHERE status IN ('pending', 'failed') AND last_error <> ''
+          ORDER BY next_attempt_at DESC LIMIT 1) AS last_error
+      FROM onboarding_outbox
+    `, [cutoff]);
+    const row = result.rows[0];
+    return { waiting: Number(row.waiting), failed: Number(row.failed), lastError: row.last_error || "" };
+  }
+
+  async onboardingSummary() {
+    const result = await this.pool.query(`
+      SELECT status, COUNT(*) AS count, MIN(created_at) AS oldest
+      FROM onboarding_outbox GROUP BY status ORDER BY status
+    `);
+    return result.rows.map((row) => ({ status: row.status, count: Number(row.count), oldestCreatedAt: nullableNumber(row.oldest) }));
+  }
+
+  // Puts rows of one status back in the queue with a fresh retry window.
+  async requeueOnboarding(fromStatus, now, deadlineAt) {
+    const result = await this.pool.query(`
+      UPDATE onboarding_outbox
+      SET status = 'pending', next_attempt_at = $2, deadline_at = $3, locked_until = 0
+      WHERE status = $1
+    `, [fromStatus, now, deadlineAt]);
+    return result.rowCount;
+  }
+
+  async getAlertState(key) {
+    const result = await this.pool.query("SELECT since, alerted_at FROM alert_state WHERE key = $1", [key]);
+    const row = result.rows[0];
+    return row ? { since: Number(row.since), alertedAt: nullableNumber(row.alerted_at) } : null;
+  }
+
+  async saveAlertState(key, state) {
+    await this.pool.query(`
+      INSERT INTO alert_state (key, since, alerted_at) VALUES ($1, $2, $3)
+      ON CONFLICT (key) DO UPDATE SET since = excluded.since, alerted_at = excluded.alerted_at
+    `, [key, state.since, state.alertedAt === undefined ? null : state.alertedAt]);
+  }
+
+  async deleteAlertState(key) {
+    await this.pool.query("DELETE FROM alert_state WHERE key = $1", [key]);
   }
 
   // One row per GUID handed out by /authorize, used to check uploads (see

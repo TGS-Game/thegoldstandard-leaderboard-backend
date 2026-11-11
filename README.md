@@ -258,6 +258,33 @@ The built-in admin page prompts for the token and lets you load public keys, ins
   otherwise only a consent withdrawal is applied and nothing else changes (no
   onboarding call either). The answer is always `200 {"ok":true}`.
 
+## Onboarding Outbox (Pipedrive)
+
+A **new** player profile is written to `onboarding_outbox` (Postgres) in the same
+request, and a background worker sends it to onboarding-bridge
+(`ONBOARD_URL`, header `x-shared-secret`, same JSON body as before plus a stable
+`Idempotency-Key` header per sign-up).
+
+- A 2xx answer means the lead is safe: the row becomes `sent` and its personal
+  data is cleared (the profile itself stays in `player_profiles`).
+- Anything else (4xx, 5xx, 429, timeout) keeps the row and retries it after
+  1, 2, 5, 10, 30, 60, then every 120 minutes, for `ONBOARD_RETRY_HOURS`
+  (default 24). After that it is `failed` and stays until retried by hand.
+- One row per email: a player goes to Pipedrive at most once.
+- Without `ONBOARD_SHARED_SECRET` the rows are kept and nothing is sent.
+- SQLite (local dev) has no outbox: the old direct call without retry is used.
+
+Admin (session or token): `GET /admin/api/onboarding-outbox` gives counts per
+status; `POST /admin/api/onboarding-outbox/retry` with JSON `{}` puts every
+`failed` row back in the queue with a fresh retry window.
+
+Slack (`SLACK_WEBHOOK_URL`, #depot-alerts): one message once any sign-up has
+waited more than `ONBOARD_ALERT_AFTER_MINUTES` (30), at most one reminder per
+24 h while it lasts, and one "fixed" message when the queue has drained. Alert
+state is in the `alert_state` table, so a restart neither repeats nor loses it.
+If the outbox write itself fails, the old direct call is tried once and an
+alert goes out straight away (at most one an hour).
+
 ## Entry History
 
 Every entry change (game upload insert/overwrite, rename, delete, admin

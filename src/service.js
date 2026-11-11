@@ -1,6 +1,8 @@
 const crypto = require("crypto");
 const { nowUnixSeconds, resolveMinTimestamp } = require("./time");
 const { SecurityObserver } = require("./observe");
+const { Alerter } = require("./alerts");
+const { OnboardingOutbox } = require("./onboarding-outbox");
 
 // Stored request metadata is clamped so a hostile header cannot bloat history.
 const MAX_HISTORY_IP_LENGTH = 200;
@@ -27,12 +29,21 @@ class LeaderboardService {
       maskGuid: (publicKey, userGuid) => this.maskUserGuid(publicKey, userGuid)
     });
     this.uploadSession = resolveUploadSession(config, storage);
+    this.alerter = new Alerter({ storage, webhookUrl: config.slackWebhookUrl });
+    // Durable outbox when the storage has it (Postgres); otherwise (SQLite,
+    // tests' fake) the old direct fire-and-forget call is kept.
+    this.onboarding = typeof storage.enqueueOnboarding === "function"
+      ? new OnboardingOutbox({ storage, config, alerter: this.alerter })
+      : null;
     this.lastSessionErrorLogAt = 0;
     this.pruneTimer = null;
   }
 
   // Background jobs. Called by server.js (not by the tests' createApp).
   start() {
+    if (this.onboarding) {
+      this.onboarding.start();
+    }
     if (this.uploadSession.mode !== "off" && !this.pruneTimer) {
       const prune = () => {
         const cutoff = nowUnixSeconds() - this.uploadSession.ttlSeconds - 24 * 60 * 60;
@@ -50,6 +61,14 @@ class LeaderboardService {
       clearInterval(this.pruneTimer);
       this.pruneTimer = null;
     }
+    return this.onboarding ? this.onboarding.stop() : Promise.resolve();
+  }
+
+  describeOnboarding() {
+    const mirror = this.onboarding
+      ? this.onboarding.describe()
+      : "Onboarding mirror: direct call, no retry (this storage has no outbox; Postgres only).";
+    return `${mirror} ${this.alerter.describe()}`;
   }
 
   describeUploadSession() {
@@ -361,15 +380,55 @@ class LeaderboardService {
       updatedAt: timestamp
     });
 
-    // Mirror the registration to the external onboarding bridge. This is
-    // intentionally NOT awaited: registration has already succeeded, and the
-    // onboarding call must never delay or fail the player's response.
-    this.notifyOnboarding({
-      name,
-      email,
-      country,
-      consent: consentAccepted
-    });
+    const lead = { name, email, country, consent: consentAccepted };
+    if (!this.onboarding) {
+      // No outbox (SQLite): the old direct fire-and-forget call.
+      this.notifyOnboarding(lead);
+      return;
+    }
+
+    // Outbox: the lead is written (awaited, it is one quick insert) and sent
+    // by the background worker, which retries until onboarding-bridge answers
+    // 2xx. An email that is already in the outbox is never sent again.
+    try {
+      await this.onboarding.enqueue(lead);
+    } catch (error) {
+      // The profile is saved but the outbox write failed: try the old direct
+      // call once, and tell the owner now, because nothing will retry it.
+      console.error(`[onboarding] outbox write failed, trying a direct call: ${String(error && error.message).slice(0, 200)}`);
+      this.notifyOnboarding(lead);
+      this.alerter
+        .immediate(
+          "onboarding_outbox_write",
+          "Leaderboard: a new Switch Max sign-up could not be queued for Pipedrive (the leaderboard database refused " +
+          "the outbox write). One direct attempt was made with no retry. The player is saved in the leaderboard's " +
+          "Player Profiles, so if they are missing from Pipedrive, add them from there. Check the leaderboard " +
+          "Postgres service and logs."
+        )
+        .catch(() => {});
+    }
+  }
+
+  async getAdminOnboardingOutbox() {
+    if (!this.onboarding) {
+      throw createHttpError(404, "No onboarding outbox on this storage.");
+    }
+    return { configured: this.onboarding.configured, rows: await this.storage.onboardingSummary() };
+  }
+
+  // Admin: put stopped ("failed") sign-ups back in the queue.
+  async adminRetryOnboarding(body) {
+    if (!this.onboarding) {
+      throw createHttpError(404, "No onboarding outbox on this storage.");
+    }
+    const status = body && typeof body.status === "string" ? body.status : "failed";
+    if (status !== "failed") {
+      throw createHttpError(400, "status must be \"failed\".");
+    }
+    const now = nowUnixSeconds();
+    const count = await this.storage.requeueOnboarding("failed", now, now + this.onboarding.retrySeconds);
+    this.onboarding.kick();
+    return { requeued: count };
   }
 
   // Fire-and-forget POST to the onboarding bridge. Any slowness, error, or

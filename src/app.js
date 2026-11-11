@@ -443,6 +443,28 @@ function createApp(service, config) {
       }
     });
 
+    // Onboarding outbox: counts per status, and a retry for stopped rows.
+    app.get("/admin/api/onboarding-outbox", async (_req, res, next) => {
+      try {
+        res.status(200).json(await service.getAdminOnboardingOutbox());
+      } catch (error) {
+        next(error);
+      }
+    });
+
+    // JSON only, so a cross-site form post with the admin's cookie cannot
+    // trigger it (a JSON POST from another origin needs a CORS preflight).
+    app.post("/admin/api/onboarding-outbox/retry", async (req, res, next) => {
+      try {
+        if (!req.is("application/json")) {
+          throw createHttpError(415, "Send JSON.");
+        }
+        res.status(200).json(await service.adminRetryOnboarding(req.body));
+      } catch (error) {
+        next(error);
+      }
+    });
+
     app.post("/admin/api/entries", async (req, res, next) => {
       try {
         await service.adminUpsertEntry(req.body, getRequestMeta(req));

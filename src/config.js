@@ -114,6 +114,13 @@ module.exports = {
   onboardSharedSecret: process.env.ONBOARD_SHARED_SECRET || "",
   // How long to wait on the onboarding call before giving up (ms).
   onboardTimeoutMs: parsePositiveInt(process.env.ONBOARD_TIMEOUT_MS, 5000),
+  // Outbox (Postgres): a sign-up the bridge did not accept with a 2xx is kept
+  // and retried with backoff for this many hours.
+  onboardRetryHours: parsePositiveInt(process.env.ONBOARD_RETRY_HOURS, 24),
+  // Slack alert once a sign-up has waited this long (minutes).
+  onboardAlertAfterMinutes: parsePositiveInt(process.env.ONBOARD_ALERT_AFTER_MINUTES, 30),
+  // Slack incoming webhook for #depot-alerts. Unset: alerts are only logged.
+  slackWebhookUrl: process.env.SLACK_WEBHOOK_URL || "",
   // Observe mode: log-only security telemetry, nothing is ever rejected. All
   // optional; blank values fall back to the defaults in observe.js.
   observe: {

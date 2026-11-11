@@ -18,13 +18,17 @@ async function main() {
     console.log(`Leaderboard backend listening on port ${config.port} using ${storageLabel}.`);
     console.log(describeRateLimits(config.rateLimits));
     console.log(service.describeUploadSession());
+    console.log(service.describeOnboarding());
     console.log(`trust proxy: ${JSON.stringify(config.trustProxy)} (client IP for rate limits ${config.trustProxy === false ? "is the socket address" : "comes from X-Forwarded-For"}).`);
   });
 
   async function shutdown(signal) {
     console.log(`Received ${signal}, shutting down leaderboard backend...`);
     server.close(async () => {
-      service.stop();
+      await Promise.race([
+        service.stop(),
+        new Promise((resolve) => setTimeout(resolve, 3000))
+      ]).catch(() => {});
       // Last flush of the observe-mode traffic counts; never waits long.
       await Promise.race([
         service.observer.stop(),
