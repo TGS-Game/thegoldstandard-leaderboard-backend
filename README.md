@@ -92,6 +92,38 @@ The client IP is `req.ip`. On Railway `trust proxy` defaults to 1 hop, so it is
 the last `X-Forwarded-For` entry (the one Railway's edge appends); a client
 cannot fake it by sending its own header. Override with `TRUST_PROXY`.
 
+## Upload Sessions
+
+`GET /authorize` hands out a GUID; it is recorded in the `upload_sessions` table
+(Postgres only) and works as the upload's session token. `POST /entry/upload`
+is checked against it:
+
+- the GUID must have come from `/authorize` (`unknown`),
+- it is single use (`used`),
+- at least `UPLOAD_MIN_PLAY_SECONDS` must have passed since it was issued
+  (`too_fast`), and at most `UPLOAD_SESSION_TTL_SECONDS` (`expired`),
+- with `MAX_SCORE_PER_SECOND` set, the score may be at most that many points per
+  second since it was issued (`implausible_score`).
+
+Scores above `MAX_SCORE` (default 2147483647, the INTEGER limit) or below the
+INTEGER minimum are always refused with `400 score is out of range.`
+
+`UPLOAD_SESSION_MODE`:
+
+- `log` (default): nothing is refused; each upload that *would* be refused prints
+  one `[upload-session] would refuse ... reason=...` line (masked guidRef only).
+- `enforce`: those uploads get `403 Upload refused.` A refused upload does not use
+  up the GUID. If the GUID cannot be recorded or checked, `/authorize` and the
+  upload answer `503` (fail closed).
+- `off`: no recording, no checks.
+
+The shipped game fetches the next GUID right after each upload, so a GUID is
+used once but can be days old. Before `enforce`, read a week of `log` lines;
+with the current game keep the TTL long (default 30 days) and the minimum play
+time at 0-2 s. For short TTLs the game must (1) call `GET /authorize` when a run
+starts and upload with that GUID, and (2) call `GET /authorize` again after any
+failed upload, so a refused GUID is never kept.
+
 ## Health Check
 
 - `GET /health`: no auth. Returns `200 {"status":"ok"}` when the data store

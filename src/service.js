@@ -7,6 +7,11 @@ const MAX_HISTORY_IP_LENGTH = 200;
 const MAX_HISTORY_USER_AGENT_LENGTH = 300;
 const DEFAULT_HISTORY_LIMIT = 100;
 const MAX_HISTORY_LIMIT = 500;
+// The score column is a 32-bit INTEGER.
+const INT32_MAX = 2147483647;
+const INT32_MIN = -2147483648;
+const SESSION_ERROR_LOG_INTERVAL_SECONDS = 60;
+const UPLOAD_SESSION_PRUNE_INTERVAL_MS = 60 * 60 * 1000;
 
 class LeaderboardService {
   constructor(storage, config) {
@@ -21,10 +26,119 @@ class LeaderboardService {
       config,
       maskGuid: (publicKey, userGuid) => this.maskUserGuid(publicKey, userGuid)
     });
+    this.uploadSession = resolveUploadSession(config, storage);
+    this.lastSessionErrorLogAt = 0;
+    this.pruneTimer = null;
   }
 
+  // Background jobs. Called by server.js (not by the tests' createApp).
+  start() {
+    if (this.uploadSession.mode !== "off" && !this.pruneTimer) {
+      const prune = () => {
+        const cutoff = nowUnixSeconds() - this.uploadSession.ttlSeconds - 24 * 60 * 60;
+        Promise.resolve()
+          .then(() => this.storage.pruneUploadSessions(cutoff))
+          .catch((error) => this.logSessionError("prune", error));
+      };
+      this.pruneTimer = setInterval(prune, UPLOAD_SESSION_PRUNE_INTERVAL_MS);
+      this.pruneTimer.unref();
+    }
+  }
+
+  stop() {
+    if (this.pruneTimer) {
+      clearInterval(this.pruneTimer);
+      this.pruneTimer = null;
+    }
+  }
+
+  describeUploadSession() {
+    const s = this.uploadSession;
+    if (s.mode === "off") {
+      return `Upload session checks: off${s.unsupported ? " (this storage does not support them; Postgres only)" : ""}.`;
+    }
+    return `Upload session checks: ${s.mode} (ttl ${s.ttlSeconds}s, min play ${s.minPlaySeconds}s, ` +
+      `max score/s ${s.maxScorePerSecond || "off"}, max score ${this.config.maxScore || INT32_MAX}).`;
+  }
+
+  // The returned GUID is also the upload's session token: it is recorded so
+  // an upload can be checked against it (known, unused, timing).
   async authorize() {
-    return crypto.randomUUID();
+    const guid = crypto.randomUUID();
+    if (this.uploadSession.mode !== "off") {
+      try {
+        await this.storage.insertUploadSession({ guid, issuedAt: nowUnixSeconds() });
+      } catch (error) {
+        this.logSessionError("record", error);
+        if (this.uploadSession.mode === "enforce") {
+          // A GUID that was not recorded could never be used to upload.
+          throw createHttpError(503, "Service unavailable.");
+        }
+      }
+    }
+    return guid;
+  }
+
+  // Returns null (nothing to do), { claimedAt } (enforce: already marked
+  // used) or { markAfter } (log: mark used once the entry is stored). Throws
+  // 403 when enforce refuses the upload, 503 when the check cannot run.
+  async checkUploadSession(publicKey, userGuid, score) {
+    const settings = this.uploadSession;
+    if (settings.mode === "off") {
+      return null;
+    }
+    const enforce = settings.mode === "enforce";
+    const now = nowUnixSeconds();
+
+    let row;
+    try {
+      row = await this.storage.getUploadSession(userGuid);
+    } catch (error) {
+      this.logSessionError("lookup", error);
+      if (enforce) {
+        throw createHttpError(503, "Service unavailable.");
+      }
+      return null;
+    }
+
+    const reason = uploadSessionVerdict(row, now, score, settings);
+    const describe = () =>
+      `reason=${reason} guidRef=${this.maskUserGuid(publicKey, userGuid)} ` +
+      `elapsedSeconds=${row ? now - row.issuedAt : "n/a"} score=${score}`;
+
+    if (!enforce) {
+      if (reason) {
+        console.warn(`[upload-session] would refuse (log mode, stored anyway): ${describe()}`);
+      }
+      return { markAfter: Boolean(row && row.usedAt === null), now };
+    }
+
+    if (reason) {
+      console.warn(`[upload-session] refused: ${describe()}`);
+      throw createHttpError(403, "Upload refused.");
+    }
+
+    let claimed;
+    try {
+      claimed = await this.storage.claimUploadSession(userGuid, now);
+    } catch (error) {
+      this.logSessionError("claim", error);
+      throw createHttpError(503, "Service unavailable.");
+    }
+    if (!claimed) {
+      console.warn(`[upload-session] refused: reason=used (concurrent upload) guidRef=${this.maskUserGuid(publicKey, userGuid)}`);
+      throw createHttpError(403, "Upload refused.");
+    }
+    return { claimedAt: now };
+  }
+
+  logSessionError(stage, error) {
+    const now = nowUnixSeconds();
+    if (now - this.lastSessionErrorLogAt < SESSION_ERROR_LOG_INTERVAL_SECONDS) {
+      return;
+    }
+    this.lastSessionErrorLogAt = now;
+    console.error(`[upload-session] ${stage} failed: ${String(error && error.message).slice(0, 200)}`);
   }
 
   async getLeaderboard(query) {
@@ -68,23 +182,45 @@ class LeaderboardService {
     const publicKey = this.requirePublicKey(body.publicKey);
     const userGuid = this.requireUserGuid(body.userGuid);
     const username = this.normalizeUsername(body.username);
-    const score = this.normalizeScore(body.score);
+    const score = this.normalizeScore(body.score, this.config.maxScore);
     const extra = this.normalizeExtra(body.extra);
 
-    const timestamp = nowUnixSeconds();
-    const existing = await this.storage.getEntry(publicKey, userGuid);
-    const id = existing ? existing.id : crypto.randomUUID();
+    const session = await this.checkUploadSession(publicKey, userGuid, score);
 
-    await this.storage.upsertEntry({
-      id,
-      publicKey,
-      userGuid,
-      username,
-      score,
-      extra,
-      createdAt: existing ? existing.createdAt : timestamp,
-      updatedAt: timestamp
-    });
+    const timestamp = nowUnixSeconds();
+    let existing;
+    let id;
+    try {
+      existing = await this.storage.getEntry(publicKey, userGuid);
+      id = existing ? existing.id : crypto.randomUUID();
+
+      await this.storage.upsertEntry({
+        id,
+        publicKey,
+        userGuid,
+        username,
+        score,
+        extra,
+        createdAt: existing ? existing.createdAt : timestamp,
+        updatedAt: timestamp
+      });
+    } catch (error) {
+      if (session && session.claimedAt) {
+        // Nothing was stored: give the GUID back so the player can retry.
+        Promise.resolve()
+          .then(() => this.storage.releaseUploadSession(userGuid, session.claimedAt))
+          .catch((releaseError) => this.logSessionError("release", releaseError));
+      }
+      throw error;
+    }
+
+    if (session && session.markAfter) {
+      // Log mode: mark the GUID used so a second upload with it shows up as
+      // "used". Not awaited; a failure only costs that statistic.
+      Promise.resolve()
+        .then(() => this.storage.claimUploadSession(userGuid, session.now))
+        .catch((error) => this.logSessionError("mark used", error));
+    }
 
     // Reuses the row already loaded above: no extra read for history.
     this.recordEntryHistory({
@@ -452,10 +588,18 @@ class LeaderboardService {
     return value.slice(0, this.config.maxExtraLength);
   }
 
-  normalizeScore(score) {
+  // maxScore: the configured MAX_SCORE for game uploads; admin edits pass
+  // nothing and get the full INTEGER range. Out of range is a 400 (it used to
+  // reach Postgres and come back as a 500 "out of range" error).
+  normalizeScore(score, maxScore) {
     const parsed = Number.parseInt(score, 10);
     if (!Number.isFinite(parsed)) {
       throw createHttpError(400, "score must be an integer.");
+    }
+
+    const max = Math.min(Number.isInteger(maxScore) && maxScore > 0 ? maxScore : INT32_MAX, INT32_MAX);
+    if (parsed > max || parsed < INT32_MIN) {
+      throw createHttpError(400, "score is out of range.");
     }
 
     return parsed;
@@ -536,6 +680,42 @@ class LeaderboardService {
 
     return value.slice(0, 100);
   }
+}
+
+// Upload-session settings. No uploadSession config (tests, old callers) or a
+// storage without the table (SQLite) means off.
+function resolveUploadSession(config, storage) {
+  const source = (config && config.uploadSession) || {};
+  const mode = ["log", "enforce"].includes(source.mode) ? source.mode : "off";
+  const supported = Boolean(storage && typeof storage.getUploadSession === "function");
+  return {
+    mode: supported ? mode : "off",
+    unsupported: mode !== "off" && !supported,
+    ttlSeconds: Number.isInteger(source.ttlSeconds) && source.ttlSeconds > 0 ? source.ttlSeconds : 30 * 24 * 60 * 60,
+    minPlaySeconds: Number.isInteger(source.minPlaySeconds) && source.minPlaySeconds > 0 ? source.minPlaySeconds : 0,
+    maxScorePerSecond: Number.isInteger(source.maxScorePerSecond) && source.maxScorePerSecond > 0 ? source.maxScorePerSecond : 0
+  };
+}
+
+// "" when the upload passes, else why not.
+function uploadSessionVerdict(row, now, score, settings) {
+  if (!row) {
+    return "unknown";
+  }
+  if (row.usedAt !== null && row.usedAt !== undefined) {
+    return "used";
+  }
+  const elapsed = Math.max(0, now - row.issuedAt);
+  if (elapsed < settings.minPlaySeconds) {
+    return "too_fast";
+  }
+  if (elapsed > settings.ttlSeconds) {
+    return "expired";
+  }
+  if (settings.maxScorePerSecond > 0 && score > settings.maxScorePerSecond * Math.max(elapsed, 1)) {
+    return "implausible_score";
+  }
+  return "";
 }
 
 function filterAndRankEntries(entries, options) {

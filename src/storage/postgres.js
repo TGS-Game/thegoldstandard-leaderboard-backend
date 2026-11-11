@@ -87,6 +87,64 @@ class PostgresStorage {
 
     await this.initializeEntryHistory();
     await this.initializeObservation();
+    await this.initializeUploadSessions();
+  }
+
+  // One row per GUID handed out by /authorize, used to check uploads (see
+  // upload-session checks in service.js). Only a NEW table, fail-soft like
+  // the observe tables: if it cannot be created the checks report "lookup
+  // failed" (log mode) or answer 503 (enforce mode).
+  async initializeUploadSessions() {
+    try {
+      await this.pool.query(`
+        CREATE TABLE IF NOT EXISTS upload_sessions (
+          guid TEXT PRIMARY KEY,
+          issued_at BIGINT NOT NULL,
+          used_at BIGINT
+        );
+      `);
+      await this.pool.query(`
+        CREATE INDEX IF NOT EXISTS idx_upload_sessions_issued_at ON upload_sessions(issued_at);
+      `);
+    } catch (error) {
+      console.error(`Upload session table setup failed: ${error.message}`);
+    }
+  }
+
+  async insertUploadSession({ guid, issuedAt }) {
+    await this.pool.query(`
+      INSERT INTO upload_sessions (guid, issued_at) VALUES ($1, $2)
+      ON CONFLICT (guid) DO NOTHING
+    `, [guid, issuedAt]);
+  }
+
+  async getUploadSession(guid) {
+    const result = await this.pool.query(`
+      SELECT guid, issued_at, used_at FROM upload_sessions WHERE guid = $1
+    `, [guid]);
+    const row = result.rows[0];
+    return row
+      ? { guid: row.guid, issuedAt: Number(row.issued_at), usedAt: nullableNumber(row.used_at) }
+      : null;
+  }
+
+  // Atomic single use: true only for the one caller that marks it used.
+  async claimUploadSession(guid, at) {
+    const result = await this.pool.query(`
+      UPDATE upload_sessions SET used_at = $2 WHERE guid = $1 AND used_at IS NULL
+    `, [guid, at]);
+    return result.rowCount === 1;
+  }
+
+  // Undoes a claim when the upload itself then failed, so the player can retry.
+  async releaseUploadSession(guid, at) {
+    await this.pool.query(`
+      UPDATE upload_sessions SET used_at = NULL WHERE guid = $1 AND used_at = $2
+    `, [guid, at]);
+  }
+
+  async pruneUploadSessions(cutoff) {
+    await this.pool.query("DELETE FROM upload_sessions WHERE issued_at < $1", [cutoff]);
   }
 
   // Audit trail of entry changes. Only ever creates a NEW table and its own

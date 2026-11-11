@@ -20,6 +20,24 @@ function parseCsv(value) {
     .filter(Boolean);
 }
 
+function parseNonNegativeInt(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+// One of `allowed` (case-insensitive), else the fallback with a warning.
+function parseMode(value, allowed, fallback) {
+  const text = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (!text) {
+    return fallback;
+  }
+  if (allowed.includes(text)) {
+    return text;
+  }
+  console.warn(`Ignoring unknown value ${JSON.stringify(value)} (allowed: ${allowed.join(", ")}); using "${fallback}".`);
+  return fallback;
+}
+
 function parseOptionalPositiveInt(value) {
   return parsePositiveInt(value, undefined);
 }
@@ -72,6 +90,22 @@ module.exports = {
   guidMaskSecret: process.env.GUID_MASK_SECRET || "",
   maxUsernameLength: parsePositiveInt(process.env.MAX_USERNAME_LENGTH, 127),
   maxExtraLength: parsePositiveInt(process.env.MAX_EXTRA_LENGTH, 100),
+  // Highest score a game upload may store. The column is a 32-bit INTEGER,
+  // so anything above 2147483647 is refused with a 400 either way.
+  maxScore: parsePositiveInt(process.env.MAX_SCORE, 2147483647),
+  // Checks on POST /entry/upload against the GUID /authorize handed out (the
+  // GUID is the upload's session token). Mode: off | log (default: only logs
+  // what it would refuse) | enforce (refuses with 403).
+  uploadSession: {
+    mode: parseMode(process.env.UPLOAD_SESSION_MODE, ["off", "log", "enforce"], "log"),
+    // The shipped game fetches the next GUID right after each upload, so a
+    // GUID can be days old by the time it is used. Keep this long until the
+    // game fetches it when a run starts (see README "Upload sessions").
+    ttlSeconds: parsePositiveInt(process.env.UPLOAD_SESSION_TTL_SECONDS, 30 * 24 * 60 * 60),
+    minPlaySeconds: parseNonNegativeInt(process.env.UPLOAD_MIN_PLAY_SECONDS, 0),
+    // 0 = off. Score may be at most this x seconds since /authorize.
+    maxScorePerSecond: parseNonNegativeInt(process.env.MAX_SCORE_PER_SECOND, 0)
+  },
   // External onboarding bridge: player registrations are mirrored here.
   // Fire-and-forget — never blocks or fails game registration.
   onboardUrl:
