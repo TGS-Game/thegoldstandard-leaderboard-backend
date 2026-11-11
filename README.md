@@ -274,9 +274,17 @@ request, and a background worker sends it to onboarding-bridge
 - Without `ONBOARD_SHARED_SECRET` the rows are kept and nothing is sent.
 - SQLite (local dev) has no outbox: the old direct call without retry is used.
 
+Daily cap: at most `ONBOARD_DAILY_CAP` (default 100; real use is about 5) new
+sign-ups per UTC day are sent. Beyond that, rows are `held`: kept, not sent. Once
+some have been held for 5 minutes, one Slack message says "Leaderboard blocked N
+Pipedrive sign-ups today — possible abuse", and one "fixed" message follows when
+none are held any more.
+
 Admin (session or token): `GET /admin/api/onboarding-outbox` gives counts per
-status; `POST /admin/api/onboarding-outbox/retry` with JSON `{}` puts every
-`failed` row back in the queue with a fresh retry window.
+status; `POST /admin/api/onboarding-outbox/retry` with JSON `{}` (or
+`{"status":"held"}`) puts every `failed` (or `held`) row back in the queue with
+a fresh retry window; `POST /admin/api/onboarding-outbox/discard` with
+`{"status":"held"}` drops held rows (spam) without sending them.
 
 Slack (`SLACK_WEBHOOK_URL`, #depot-alerts): one message once any sign-up has
 waited more than `ONBOARD_ALERT_AFTER_MINUTES` (30), at most one reminder per

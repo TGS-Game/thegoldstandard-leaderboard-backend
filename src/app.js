@@ -465,6 +465,17 @@ function createApp(service, config) {
       }
     });
 
+    app.post("/admin/api/onboarding-outbox/discard", async (req, res, next) => {
+      try {
+        if (!req.is("application/json")) {
+          throw createHttpError(415, "Send JSON.");
+        }
+        res.status(200).json(await service.adminDiscardOnboarding(req.body));
+      } catch (error) {
+        next(error);
+      }
+    });
+
     app.post("/admin/api/entries", async (req, res, next) => {
       try {
         await service.adminUpsertEntry(req.body, getRequestMeta(req));

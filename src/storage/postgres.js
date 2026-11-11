@@ -192,6 +192,34 @@ class PostgresStorage {
     return { waiting: Number(row.waiting), failed: Number(row.failed), lastError: row.last_error || "" };
   }
 
+  // Rows created since `since` that were let through to Pipedrive (not held
+  // by the daily cap, not discarded).
+  async countOnboardingAdmittedSince(since) {
+    const result = await this.pool.query(`
+      SELECT COUNT(*) AS count FROM onboarding_outbox
+      WHERE created_at >= $1 AND status IN ('pending', 'sent', 'failed')
+    `, [since]);
+    return Number(result.rows[0].count);
+  }
+
+  async heldOnboarding(since) {
+    const result = await this.pool.query(`
+      SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE created_at >= $1) AS today
+      FROM onboarding_outbox WHERE status = 'held'
+    `, [since]);
+    return { total: Number(result.rows[0].total), today: Number(result.rows[0].today) };
+  }
+
+  // Spam: never sent; the personal data is dropped, the email stays so it is
+  // not queued again.
+  async discardOnboarding(fromStatus) {
+    const result = await this.pool.query(`
+      UPDATE onboarding_outbox SET status = 'discarded', payload = '{}', locked_until = 0
+      WHERE status = $1
+    `, [fromStatus]);
+    return result.rowCount;
+  }
+
   async onboardingSummary() {
     const result = await this.pool.query(`
       SELECT status, COUNT(*) AS count, MIN(created_at) AS oldest

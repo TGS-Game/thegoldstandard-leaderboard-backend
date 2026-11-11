@@ -117,6 +117,9 @@ module.exports = {
   // Outbox (Postgres): a sign-up the bridge did not accept with a 2xx is kept
   // and retried with backoff for this many hours.
   onboardRetryHours: parsePositiveInt(process.env.ONBOARD_RETRY_HOURS, 24),
+  // At most this many new sign-ups a day (UTC) go to Pipedrive; the rest are
+  // held (kept, not sent) and alerted on. 0 = no cap. Real use is ~5 a day.
+  onboardDailyCap: parseNonNegativeInt(process.env.ONBOARD_DAILY_CAP, 100),
   // Slack alert once a sign-up has waited this long (minutes).
   onboardAlertAfterMinutes: parsePositiveInt(process.env.ONBOARD_ALERT_AFTER_MINUTES, 30),
   // Slack incoming webhook for #depot-alerts. Unset: alerts are only logged.

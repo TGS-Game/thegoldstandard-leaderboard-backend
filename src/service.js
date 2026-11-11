@@ -416,19 +416,33 @@ class LeaderboardService {
     return { configured: this.onboarding.configured, rows: await this.storage.onboardingSummary() };
   }
 
-  // Admin: put stopped ("failed") sign-ups back in the queue.
+  // Admin: put stopped ("failed") or cap-held ("held") sign-ups back in the
+  // queue. Released rows are sent even if today's cap is reached.
   async adminRetryOnboarding(body) {
+    const status = this.requireOutboxStatus(body);
+    const now = nowUnixSeconds();
+    const count = await this.storage.requeueOnboarding(status, now, now + this.onboarding.retrySeconds);
+    this.onboarding.kick();
+    return { requeued: count };
+  }
+
+  // Admin: drop "held" or "failed" sign-ups (spam); they are never sent.
+  async adminDiscardOnboarding(body) {
+    const status = this.requireOutboxStatus(body);
+    const count = await this.storage.discardOnboarding(status);
+    this.onboarding.kick();
+    return { discarded: count };
+  }
+
+  requireOutboxStatus(body) {
     if (!this.onboarding) {
       throw createHttpError(404, "No onboarding outbox on this storage.");
     }
     const status = body && typeof body.status === "string" ? body.status : "failed";
-    if (status !== "failed") {
-      throw createHttpError(400, "status must be \"failed\".");
+    if (status !== "failed" && status !== "held") {
+      throw createHttpError(400, "status must be \"failed\" or \"held\".");
     }
-    const now = nowUnixSeconds();
-    const count = await this.storage.requeueOnboarding("failed", now, now + this.onboarding.retrySeconds);
-    this.onboarding.kick();
-    return { requeued: count };
+    return status;
   }
 
   // Fire-and-forget POST to the onboarding bridge. Any slowness, error, or

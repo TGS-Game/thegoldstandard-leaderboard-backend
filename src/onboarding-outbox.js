@@ -19,6 +19,7 @@ const BACKOFF_SECONDS = [60, 120, 300, 600, 1800, 3600, 7200];
 const LEASE_SECONDS = 120;
 const BATCH_SIZE = 10;
 const BACKLOG_ALERT_KEY = "onboarding_backlog";
+const CAP_ALERT_KEY = "onboarding_daily_cap";
 
 class OnboardingOutbox {
   constructor({ storage, config, alerter }) {
@@ -30,6 +31,7 @@ class OnboardingOutbox {
     this.retrySeconds = (config.onboardRetryHours || 24) * 60 * 60;
     this.alertAfterSeconds = (config.onboardAlertAfterMinutes || 30) * 60;
     this.tickMs = config.onboardTickMs || 30000;
+    this.dailyCap = Number.isInteger(config.onboardDailyCap) && config.onboardDailyCap >= 0 ? config.onboardDailyCap : 100;
     this.configured = Boolean(this.url && this.secret);
     this.timer = null;
     this.running = false;
@@ -43,7 +45,8 @@ class OnboardingOutbox {
         "New sign-ups are kept in onboarding_outbox and sent once it is set.";
     }
     return `Onboarding mirror: outbox on (retries for ${this.retrySeconds / 3600} h, ` +
-      `alert when a sign-up has waited ${this.alertAfterSeconds / 60} min).`;
+      `alert when a sign-up has waited ${this.alertAfterSeconds / 60} min, ` +
+      `daily cap ${this.dailyCap || "off"}).`;
   }
 
   start() {
@@ -66,8 +69,18 @@ class OnboardingOutbox {
   // Stores the lead. Resolves "queued" (new row) or "duplicate" (this email
   // was already queued or sent: nothing more goes to Pipedrive). Throws if the
   // row could not be written.
-  async enqueue(lead, { status = "pending" } = {}) {
+  async enqueue(lead) {
     const now = nowUnixSeconds();
+    // Daily cap: over it, the row is kept as "held" (never sent until the
+    // owner releases it) instead of going to Pipedrive. Count and insert are
+    // two statements, so a burst can overshoot by a few; that is fine.
+    let status = "pending";
+    if (this.dailyCap > 0) {
+      const admitted = await this.storage.countOnboardingAdmittedSince(startOfUtcDay(now));
+      if (admitted >= this.dailyCap) {
+        status = "held";
+      }
+    }
     const result = await this.storage.enqueueOnboarding({
       email: lead.email,
       idempotencyKey: crypto.randomUUID(),
@@ -78,8 +91,11 @@ class OnboardingOutbox {
     });
     if (result === "queued" && status === "pending") {
       this.kick();
+    } else if (result === "queued") {
+      console.warn(`[onboarding] daily cap of ${this.dailyCap} reached: new sign-up held, not sent to Pipedrive.`);
+      this.kick(); // runs the alert check
     }
-    return result;
+    return result === "queued" ? status : result;
   }
 
   // Runs one pass soon, never two at once. Not awaited by callers.
@@ -162,10 +178,17 @@ class OnboardingOutbox {
   }
 
   async checkAlerts() {
+    const now = nowUnixSeconds();
+    // Daily cap: alert once held sign-ups have existed for 5 minutes.
+    const held = await this.storage.heldOnboarding(startOfUtcDay(now));
+    await this.alerter.update(CAP_ALERT_KEY, held.total > 0, {
+      problem: () => capMessage(held, this.dailyCap),
+      fixed: "Leaderboard: fixed. No Switch Max sign-ups are held by the daily Pipedrive cap any more."
+    });
+
     if (!this.configured) {
       return;
     }
-    const now = nowUnixSeconds();
     const backlog = await this.storage.onboardingBacklog(now - this.alertAfterSeconds);
     await this.alerter.update(BACKLOG_ALERT_KEY, backlog.waiting > 0, {
       minSeconds: 0, // the 30-minute wait is already part of the condition
@@ -173,6 +196,19 @@ class OnboardingOutbox {
       fixed: "Leaderboard: fixed. All waiting Switch Max sign-ups have now reached Pipedrive (onboarding-bridge accepted them)."
     });
   }
+}
+
+function capMessage(held, cap) {
+  return `Leaderboard blocked ${held.today} Pipedrive sign-up${held.today === 1 ? "" : "s"} today — possible abuse. ` +
+    `More than ${cap} new Switch Max players registered today (the daily cap, ONBOARD_DAILY_CAP), so the rest are ` +
+    `held instead of being sent to Pipedrive (${held.total} held in total). Nothing is lost. What to do: look at the ` +
+    "newest Player Profiles in the leaderboard admin. If they are real players, release them with " +
+    "POST /admin/api/onboarding-outbox/retry {\"status\":\"held\"} (admin token), or raise ONBOARD_DAILY_CAP. " +
+    "If they are spam, drop them with POST /admin/api/onboarding-outbox/discard {\"status\":\"held\"}.";
+}
+
+function startOfUtcDay(unixSeconds) {
+  return unixSeconds - (unixSeconds % 86400);
 }
 
 function backlogMessage(backlog, alertAfterSeconds, retrySeconds) {
@@ -191,5 +227,6 @@ function backlogMessage(backlog, alertAfterSeconds, retrySeconds) {
 module.exports = {
   OnboardingOutbox,
   BACKOFF_SECONDS,
-  BACKLOG_ALERT_KEY
+  BACKLOG_ALERT_KEY,
+  CAP_ALERT_KEY
 };
