@@ -79,6 +79,19 @@ http://localhost:8787
 - `OBSERVE_MAX_ROWS_PER_HOUR`: Default `500` observation rows per reason per hour.
 - `OBSERVE_MAX_ISSUED_PER_HOUR`: Default `2000` issued GUID rows per hour.
 
+## Rate Limits
+
+Enforced, in memory (one replica), per client IP and globally, on
+`GET /authorize`, `POST /entry/upload`, `POST /player-profile` and
+`POST /admin/login`. Over a limit the answer is `429 Too many requests.` with
+`Retry-After`; one `[rate-limit]` log line is printed per window, not per
+request. Defaults are about 20x real player traffic; see `.env.example`.
+`RATE_LIMITS=off` switches them all off.
+
+The client IP is `req.ip`. On Railway `trust proxy` defaults to 1 hop, so it is
+the last `X-Forwarded-For` entry (the one Railway's edge appends); a client
+cannot fake it by sending its own header. Override with `TRUST_PROXY`.
+
 ## Health Check
 
 - `GET /health`: no auth. Returns `200 {"status":"ok"}` when the data store

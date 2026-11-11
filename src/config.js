@@ -1,5 +1,6 @@
 const path = require("path");
 const dotenv = require("dotenv");
+const { resolveRateLimits, resolveTrustProxy } = require("./rate-limit");
 
 dotenv.config();
 
@@ -36,6 +37,11 @@ const sqlitePath = process.env.SQLITE_PATH
 module.exports = {
   port: parsePositiveInt(process.env.PORT, 8787),
   corsOrigin: process.env.CORS_ORIGIN || "*",
+  // Express `trust proxy`: 1 hop on Railway unless TRUST_PROXY says otherwise.
+  trustProxy: resolveTrustProxy(process.env),
+  // Enforced per-IP and global limits on /authorize, /entry/upload,
+  // /player-profile and POST /admin/login. RATE_LIMITS=off switches them off.
+  rateLimits: resolveRateLimits(process.env),
   databaseUrl: process.env.DATABASE_URL || "",
   // Postgres pool limits: how long to wait for a connection, and the longest
   // a single statement may run, in ms. A Postgres blip then fails a request

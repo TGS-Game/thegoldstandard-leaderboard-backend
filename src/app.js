@@ -5,6 +5,7 @@ const path = require("path");
 const { createHttpError } = require("./service");
 const { nowUnixSeconds } = require("./time");
 const auth = require("./auth");
+const { RateLimiter, rateLimitMiddleware } = require("./rate-limit");
 
 const MAX_META_IP_LENGTH = 200;
 const MAX_META_USER_AGENT_LENGTH = 300;
@@ -56,6 +57,24 @@ function createApp(service, config) {
   const observer = service.observer;
 
   app.disable("x-powered-by");
+  // Behind Railway's edge proxy req.ip is the client address only when
+  // `trust proxy` is set (1 hop: the last X-Forwarded-For entry). Unset in
+  // tests and local runs, so req.ip is the socket address there.
+  if (config.trustProxy !== undefined && config.trustProxy !== false) {
+    app.set("trust proxy", config.trustProxy);
+  }
+
+  // Enforced rate limits (see rate-limit.js). A config without rateLimits, or
+  // with RATE_LIMITS=off, passes every request through.
+  const limiter = new RateLimiter();
+  const rateLimitsOn = Boolean(config.rateLimits && config.rateLimits.enabled);
+  const limit = (name) => {
+    const limits = rateLimitsOn ? config.rateLimits.limits[name] : null;
+    if (!limits || (!limits.perIp && !limits.global)) {
+      return (_req, _res, next) => next();
+    }
+    return rateLimitMiddleware(limiter, name, limits);
+  };
   // Observe mode: only attaches a listener that runs after the response has
   // been sent. It cannot reject, delay or change any request.
   app.use(observer.middleware());
@@ -77,7 +96,7 @@ function createApp(service, config) {
     }
   });
 
-  app.get("/authorize", async (_req, res, next) => {
+  app.get("/authorize", limit("authorize"), async (_req, res, next) => {
     try {
       const guid = await service.authorize();
       observer.guidIssued(res, guid);
@@ -96,7 +115,7 @@ function createApp(service, config) {
     }
   });
 
-  app.post("/entry/upload", formParser.none(), async (req, res, next) => {
+  app.post("/entry/upload", limit("upload"), formParser.none(), async (req, res, next) => {
     try {
       const stored = await service.uploadEntry(req.body, getRequestMeta(req));
       observer.uploadStored(res, stored);
@@ -155,7 +174,7 @@ function createApp(service, config) {
     }
   });
 
-  app.post("/player-profile", formParser.none(), async (req, res, next) => {
+  app.post("/player-profile", limit("profile"), formParser.none(), async (req, res, next) => {
     try {
       await service.uploadPlayerProfile(req.body);
       res.status(200).json({ ok: true });
@@ -287,7 +306,7 @@ function createApp(service, config) {
         res.sendFile(path.join(publicDir, "login.html"));
       });
 
-      app.post("/admin/login", loginFormParser, (req, res) => {
+      app.post("/admin/login", limit("adminLogin"), loginFormParser, (req, res) => {
         const supplied = typeof req.body.password === "string" ? req.body.password : "";
         const ok = supplied && auth.timingSafeEqualStrings(supplied, config.adminPassword);
         if (!ok) {
