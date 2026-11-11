@@ -37,6 +37,13 @@ module.exports = {
   port: parsePositiveInt(process.env.PORT, 8787),
   corsOrigin: process.env.CORS_ORIGIN || "*",
   databaseUrl: process.env.DATABASE_URL || "",
+  // Postgres pool limits: how long to wait for a connection, and the longest
+  // a single statement may run, in ms. A Postgres blip then fails a request
+  // quickly (and /health answers 503) instead of hanging.
+  postgres: {
+    connectTimeoutMs: parsePositiveInt(process.env.PG_CONNECT_TIMEOUT_MS, 5000),
+    statementTimeoutMs: parsePositiveInt(process.env.PG_STATEMENT_TIMEOUT_MS, 10000)
+  },
   sqlitePath,
   allowedPublicKeys: parseCsv(process.env.ALLOWED_PUBLIC_KEYS),
   adminToken: process.env.ADMIN_TOKEN || "",

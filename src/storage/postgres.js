@@ -1,10 +1,39 @@
 const { Pool } = require("pg");
 
+// Defaults so a Postgres blip fails fast instead of hanging requests.
+const DEFAULT_CONNECT_TIMEOUT_MS = 5000;
+const DEFAULT_STATEMENT_TIMEOUT_MS = 10000;
+const POOL_ERROR_LOG_INTERVAL_MS = 60000;
+
 class PostgresStorage {
-  constructor(connectionString) {
+  constructor(connectionString, options = {}) {
+    const connectTimeoutMs = options.connectTimeoutMs || DEFAULT_CONNECT_TIMEOUT_MS;
+    const statementTimeoutMs = options.statementTimeoutMs || DEFAULT_STATEMENT_TIMEOUT_MS;
     this.pool = new Pool({
       connectionString,
-      ssl: { rejectUnauthorized: false }
+      ssl: options.ssl === false ? false : { rejectUnauthorized: false },
+      // Waiting for a connection (new or from the pool) gives up after this.
+      connectionTimeoutMillis: connectTimeoutMs,
+      idleTimeoutMillis: 30000,
+      // Server-side limit per statement, plus a client-side backstop a bit
+      // longer, so a stuck query frees its connection.
+      statement_timeout: statementTimeoutMs,
+      query_timeout: statementTimeoutMs + 2000
+    });
+
+    // An idle client that loses its connection (Postgres restart, network
+    // drop) emits 'error' on the pool. Without a listener Node treats that as
+    // an unhandled 'error' event and the process exits. The pool discards the
+    // broken client by itself, so logging is all that is needed. At most one
+    // line a minute so an outage cannot flood the logs.
+    this.lastPoolErrorLogAt = 0;
+    this.pool.on("error", (error) => {
+      const now = Date.now();
+      if (now - this.lastPoolErrorLogAt < POOL_ERROR_LOG_INTERVAL_MS) {
+        return;
+      }
+      this.lastPoolErrorLogAt = now;
+      console.error(`Postgres idle client error (the pool drops that connection and carries on): ${error.message}`);
     });
   }
 
