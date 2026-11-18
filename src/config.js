@@ -124,6 +124,17 @@ module.exports = {
   onboardAlertAfterMinutes: parsePositiveInt(process.env.ONBOARD_ALERT_AFTER_MINUTES, 30),
   // Slack incoming webhook for #depot-alerts. Unset: alerts are only logged.
   slackWebhookUrl: process.env.SLACK_WEBHOOK_URL || "",
+  // Support site notifications: a "high_score_approved" event when a checked
+  // game upload becomes the new #1 (see src/notify-support.js). No secret =
+  // nothing is sent. Fire-and-forget; never affects the upload.
+  notifications: {
+    eventSecret: process.env.NOTIFICATIONS_EVENT_SECRET || "",
+    // Blank = https://support.thegoldstandard.com/api/notifications/events
+    url: process.env.SUPPORT_NOTIFY_URL || "",
+    // Boards where a LOWER score is better. Blank = higher wins everywhere
+    // (as on the shipped game's board).
+    ascendingPublicKeys: parseCsv(process.env.NOTIFY_ASCENDING_PUBLIC_KEYS)
+  },
   // Observe mode: log-only security telemetry, nothing is ever rejected. All
   // optional; blank values fall back to the defaults in observe.js.
   observe: {

@@ -3,6 +3,7 @@ const { nowUnixSeconds, resolveMinTimestamp } = require("./time");
 const { SecurityObserver } = require("./observe");
 const { Alerter } = require("./alerts");
 const { OnboardingOutbox } = require("./onboarding-outbox");
+const { SupportNotifier } = require("./notify-support");
 
 // Stored request metadata is clamped so a hostile header cannot bloat history.
 const MAX_HISTORY_IP_LENGTH = 200;
@@ -35,6 +36,14 @@ class LeaderboardService {
     this.onboarding = typeof storage.enqueueOnboarding === "function"
       ? new OnboardingOutbox({ storage, config, alerter: this.alerter })
       : null;
+    const notify = config.notifications || {};
+    this.supportNotifier = new SupportNotifier({
+      url: notify.url,
+      secret: notify.eventSecret,
+      timeoutMs: notify.timeoutMs,
+      retryDelaysMs: notify.retryDelaysMs
+    });
+    this.ascendingPublicKeys = Array.isArray(notify.ascendingPublicKeys) ? notify.ascendingPublicKeys : [];
     this.lastSessionErrorLogAt = 0;
     this.pruneTimer = null;
   }
@@ -98,9 +107,11 @@ class LeaderboardService {
     return guid;
   }
 
-  // Returns null (nothing to do), { claimedAt } (enforce: already marked
-  // used) or { markAfter } (log: mark used once the entry is stored). Throws
-  // 403 when enforce refuses the upload, 503 when the check cannot run.
+  // Returns null (mode off: no checks), { claimedAt, passed } (enforce:
+  // already marked used) or { markAfter, passed } (log: mark used once the
+  // entry is stored). passed is false when log mode only let the upload
+  // through (a would-refuse reason, or the check could not run). Throws 403
+  // when enforce refuses the upload, 503 when the check cannot run.
   async checkUploadSession(publicKey, userGuid, score) {
     const settings = this.uploadSession;
     if (settings.mode === "off") {
@@ -117,7 +128,7 @@ class LeaderboardService {
       if (enforce) {
         throw createHttpError(503, "Service unavailable.");
       }
-      return null;
+      return { passed: false };
     }
 
     const reason = uploadSessionVerdict(row, now, score, settings);
@@ -129,7 +140,7 @@ class LeaderboardService {
       if (reason) {
         console.warn(`[upload-session] would refuse (log mode, stored anyway): ${describe()}`);
       }
-      return { markAfter: Boolean(row && row.usedAt === null), now };
+      return { markAfter: Boolean(row && row.usedAt === null), now, passed: !reason };
     }
 
     if (reason) {
@@ -148,7 +159,7 @@ class LeaderboardService {
       console.warn(`[upload-session] refused: reason=used (concurrent upload) guidRef=${this.maskUserGuid(publicKey, userGuid)}`);
       throw createHttpError(403, "Upload refused.");
     }
-    return { claimedAt: now };
+    return { claimedAt: now, passed: true };
   }
 
   logSessionError(stage, error) {
@@ -252,8 +263,72 @@ class LeaderboardService {
       meta
     });
 
+    // Support site notification for a new #1. Not awaited: it runs after
+    // the write and can never delay or fail this upload.
+    this.notifyIfNewTopScore({
+      publicKey,
+      userGuid,
+      username,
+      score,
+      id,
+      existing,
+      // No session (mode off) means no checks are configured to fail.
+      passedChecks: !session || session.passed === true
+    });
+
     // Only read by observe mode; the route's response does not use it.
     return { existed: Boolean(existing) };
+  }
+
+  // "High score approved": a game upload that passed every check (not just
+  // let through by log mode) on one of the game's boards (the expected
+  // public keys, by default the shipped game's key) that strictly beats the
+  // board's previous top score, including the player's own previous score.
+  // The first entry on an empty board does not count. Admin edits never come
+  // here. Never throws; returns a promise for tests only.
+  notifyIfNewTopScore({ publicKey, userGuid, username, score, id, existing, passedChecks }) {
+    if (!passedChecks || !this.supportNotifier.configured) {
+      // Off: send() writes the single "off" log line and does nothing else.
+      return passedChecks ? this.supportNotifier.send("high_score_approved") : Promise.resolve("skipped");
+    }
+    if (!this.observer.settings.expectedPublicKeys.includes(publicKey)) {
+      return Promise.resolve("skipped");
+    }
+    const ascending = this.ascendingPublicKeys.includes(publicKey);
+    const beats = (a, b) => (ascending ? a < b : a > b);
+
+    return Promise.resolve()
+      .then(() => this.storage.listEntries(publicKey))
+      .then((entries) => {
+        let previousTop = existing ? existing.score : null;
+        for (const entry of entries) {
+          if (entry.userGuid === userGuid) {
+            continue;
+          }
+          if (previousTop === null || beats(entry.score, previousTop)) {
+            previousTop = entry.score;
+          }
+        }
+        if (previousTop === null || !beats(score, previousTop)) {
+          return "skipped";
+        }
+        // The masked guid ref, never the real GUID (the player's write
+        // credential), goes into the key the support site stores.
+        const guidRef = this.maskUserGuid(publicKey, userGuid);
+        return this.supportNotifier.send(
+          "high_score_approved",
+          `leaderboard:highscore:${publicKey}:${guidRef}:${score}`,
+          { player_name: username, score, entry_id: id }
+        );
+      })
+      .catch((error) => {
+        console.error(`[notify] high score check failed: ${String(error && error.message).slice(0, 200)}`);
+        return "failed";
+      });
+  }
+
+  describeNotifications() {
+    return this.supportNotifier.describe();
   }
 
   // Admin-only since stage 1 (the route checks auth before calling this).

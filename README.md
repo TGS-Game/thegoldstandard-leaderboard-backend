@@ -78,6 +78,13 @@ http://localhost:8787
   proposed limits as `<requests>/<window seconds>`. Recorded, never enforced.
 - `OBSERVE_MAX_ROWS_PER_HOUR`: Default `500` observation rows per reason per hour.
 - `OBSERVE_MAX_ISSUED_PER_HOUR`: Default `2000` issued GUID rows per hour.
+- `NOTIFICATIONS_EVENT_SECRET`: Optional. Bearer secret for the support site's
+  notifications endpoint (same value as on the support site). Unset: nothing is
+  sent and the startup log says `notifications: off (no secret)`.
+- `SUPPORT_NOTIFY_URL`: Optional. Default
+  `https://support.thegoldstandard.com/api/notifications/events`.
+- `NOTIFY_ASCENDING_PUBLIC_KEYS`: Optional comma-separated boards where a lower
+  score is better (for the new-#1 check). Default: higher wins everywhere.
 
 ## Rate Limits
 
@@ -123,6 +130,29 @@ with the current game keep the TTL long (default 30 days) and the minimum play
 time at 0-2 s. For short TTLs the game must (1) call `GET /authorize` when a run
 starts and upload with that GUID, and (2) call `GET /authorize` again after any
 failed upload, so a refused GUID is never kept.
+
+## Support Site Notifications
+
+When a game upload is accepted and becomes the new #1 on the game's board, the
+backend sends one `high_score_approved` event to the support site
+(`SUPPORT_NOTIFY_URL`, `Authorization: Bearer NOTIFICATIONS_EVENT_SECRET`):
+
+```json
+{ "type": "high_score_approved",
+  "idempotency_key": "leaderboard:highscore:<publicKey>:<guidRef>:<score>",
+  "data": { "player_name": "<username>", "score": 123, "entry_id": "<entry id>" } }
+```
+
+- Counts only when the upload passed every upload-session check (an upload that
+  `log` mode only lets through, or whose check could not run, never fires), on
+  an expected public key (`OBSERVE_EXPECTED_PUBLIC_KEYS`, default the shipped
+  game's key), and the score strictly beats the board's previous top score
+  (including the player's own). The first entry on an empty board does not
+  count. Admin creates and edits never fire.
+- `guidRef` is the masked GUID from `GET /get`, never the real GUID.
+- Fire-and-forget after the entry is stored: it never delays or fails the
+  upload. 5 s timeout, up to 3 tries on network errors and 5xx (same
+  idempotency key), no retry on 4xx. The secret is never logged.
 
 ## Health Check
 

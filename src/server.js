@@ -19,6 +19,7 @@ async function main() {
     console.log(describeRateLimits(config.rateLimits));
     console.log(service.describeUploadSession());
     console.log(service.describeOnboarding());
+    console.log(service.describeNotifications());
     console.log(`trust proxy: ${JSON.stringify(config.trustProxy)} (client IP for rate limits ${config.trustProxy === false ? "is the socket address" : "comes from X-Forwarded-For"}).`);
   });
 
